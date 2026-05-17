@@ -120,7 +120,9 @@ func TestHandlerInvalidJSON(t *testing.T) {
 	}
 
 	var payload ErrorPayload
-	json.NewDecoder(w.Body).Decode(&payload)
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
 	if payload.Error.Code != CodeInvalidRequest {
 		t.Errorf("want code %s, got %s", CodeInvalidRequest, payload.Error.Code)
 	}
@@ -154,7 +156,9 @@ func TestHandlerInvalidRoute(t *testing.T) {
 	}
 
 	var payload ErrorPayload
-	json.NewDecoder(w.Body).Decode(&payload)
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
 	if payload.Error.Code != CodeInvalidRouteFormat {
 		t.Errorf("want code %s, got %s", CodeInvalidRouteFormat, payload.Error.Code)
 	}
@@ -176,7 +180,9 @@ func TestHandlerTooManyPoints(t *testing.T) {
 	}
 
 	var payload ErrorPayload
-	json.NewDecoder(w.Body).Decode(&payload)
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
 	if payload.Error.Code != CodeRouteTooLarge {
 		t.Errorf("want code %s, got %s", CodeRouteTooLarge, payload.Error.Code)
 	}
@@ -249,7 +255,9 @@ func TestMiddlewareUnexpectedError(t *testing.T) {
 	}
 
 	var payload ErrorPayload
-	json.NewDecoder(w.Body).Decode(&payload)
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
 	if payload.Error.Code != CodeInternal {
 		t.Errorf("want code %s, got %s", CodeInternal, payload.Error.Code)
 	}

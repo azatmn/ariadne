@@ -55,7 +55,7 @@ func TestRecoverNoPanic(t *testing.T) {
 func TestLimitBodyAllows(t *testing.T) {
 	handler := LimitBody(100)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		w.Write(body)
+		_, _ = w.Write(body)
 	}))
 
 	// 10 байт — проходит
@@ -75,7 +75,7 @@ func TestLimitBodyAllows(t *testing.T) {
 func TestLimitBodyRejects(t *testing.T) {
 	handler := LimitBody(10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		w.Write(body)
+		_, _ = w.Write(body)
 	}))
 
 	// 20 байт — превышает лимит в 10
@@ -96,7 +96,7 @@ func TestLoggerPassesThrough(t *testing.T) {
 
 	handler := Logger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 
 	r := httptest.NewRequest(http.MethodPost, "/v1/routes/resolve-collisions", nil)

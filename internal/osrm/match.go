@@ -1,11 +1,5 @@
 package osrm
 
-import (
-	"context"
-
-	"ariadne/internal/geo"
-)
-
 // Заготовка под пост-MVP интеграцию с OSRM.
 //
 // OSRM (Open Source Routing Machine) — внешний HTTP-сервис, развёрнутый
@@ -23,23 +17,23 @@ import (
 // Ограничения OSRM: максимум ~100 точек на запрос — большие треки
 // придётся резать на батчи и сшивать.
 
-// Client — HTTP-клиент к OSRM.
-type Client struct {
-	BaseURL string
-}
-
-// New создаёт клиента.
-func New(baseURL string) *Client {
-	return &Client{BaseURL: baseURL}
-}
-
-// Match снэпает массив точек на дорожную сеть.
+// // Client — HTTP-клиент к OSRM.
+// type Client struct {
+// 	BaseURL string
+// }
 //
-// TODO (пост-MVP):
-//  1. Сформировать URL с координатами и timestamps.
-//  2. Разбить на батчи если len(points) > лимита OSRM.
-//  3. Распарсить ответ (matchings[].geometry.coordinates), маппить обратно в []Point.
-//  4. Учесть случаи code != "Ok" и tracepoints == null (точки, которые не удалось снэпнуть).
-func (c *Client) Match(ctx context.Context, points []geo.Point) ([]geo.Point, error) {
-	return points, nil
-}
+// // New создаёт клиента.
+// func New(baseURL string) *Client {
+// 	return &Client{BaseURL: baseURL}
+// }
+//
+// // Match снэпает массив точек на дорожную сеть.
+// //
+// // TODO (пост-MVP):
+// //  1. Сформировать URL с координатами и timestamps.
+// //  2. Разбить на батчи если len(points) > лимита OSRM.
+// //  3. Распарсить ответ (matchings[].geometry.coordinates), маппить обратно в []Point.
+// //  4. Учесть случаи code != "Ok" и tracepoints == null (точки, которые не удалось снэпнуть).
+// func (c *Client) Match(ctx context.Context, points []geo.Point) ([]geo.Point, error) {
+// 	return points, nil
+// }
