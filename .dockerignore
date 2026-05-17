@@ -1,0 +1,9 @@
+.git
+.idea
+.claude
+.DS_Store
+docs
+*.md
+Dockerfile
+.dockerignore
+internal/api/testdata
