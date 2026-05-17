@@ -68,7 +68,7 @@ func (h *Handler) HandleResolve(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	for _, msg := range warnings {
-		h.logger.Warn("pipeline warning", "warning", msg)
+		h.logger.Warn("pipeline warning", "request_id", w.Header().Get("X-Request-ID"), "warning", msg)
 	}
 
 	if len(cleaned) < 2 {

@@ -67,6 +67,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, code, message string) {
 		},
 	}
 
+	if requestID := w.Header().Get("X-Request-ID"); requestID != "" {
+		payload.Error.Details = map[string]any{"requestId": requestID}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)

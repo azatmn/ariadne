@@ -19,16 +19,20 @@ func ErrorMiddleware(logger *slog.Logger) func(AppHandler) http.HandlerFunc {
 				return
 			}
 
+			reqID := w.Header().Get("X-Request-ID")
+
 			if appErr, ok := errors.AsType[*AppError](err); ok {
 				status := codeToStatus[appErr.Code]
 				if status >= 500 {
 					logger.Error("handler error",
+						"request_id", reqID,
 						"code", appErr.Code,
 						"message", appErr.Message,
 						"error", appErr.Err,
 					)
 				} else {
 					logger.Warn("handler error",
+						"request_id", reqID,
 						"code", appErr.Code,
 						"message", appErr.Message,
 						"error", appErr.Err,
@@ -36,7 +40,7 @@ func ErrorMiddleware(logger *slog.Logger) func(AppHandler) http.HandlerFunc {
 				}
 				WriteError(w, r, appErr.Code, appErr.Message)
 			} else {
-				logger.Error("unexpected error", "error", err)
+				logger.Error("unexpected error", "request_id", reqID, "error", err)
 				WriteError(w, r, CodeInternal, "internal error")
 			}
 		}
@@ -48,7 +52,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					logger.Error("panic recovered", "panic", rec)
+					logger.Error("panic recovered", "request_id", w.Header().Get("X-Request-ID"), "panic", rec)
 					WriteError(w, r, CodeInternal, "internal error")
 				}
 			}()
@@ -86,6 +90,7 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(sw, r)
 
 			logger.Info("request",
+				"request_id", sw.Header().Get("X-Request-ID"),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", sw.code,
