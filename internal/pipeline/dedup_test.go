@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func TestDeduplicateRemovesDuplicates(t *testing.T) {
 	}
 
 	d := Deduplicate{DedupDistanceMeters: 2.0, MaxTimeGap: 60 * time.Second}
-	result, _, err := d.Apply(points)
+	result, _, err := d.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,7 @@ func TestDeduplicateKeepsTimeGap(t *testing.T) {
 	}
 
 	d := Deduplicate{DedupDistanceMeters: 2.0, MaxTimeGap: 60 * time.Second}
-	result, _, err := d.Apply(points)
+	result, _, err := d.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestDeduplicateKeepsTimeGap(t *testing.T) {
 func TestDeduplicateEmpty(t *testing.T) {
 	d := Deduplicate{DedupDistanceMeters: 2.0, MaxTimeGap: 60 * time.Second}
 
-	result, _, err := d.Apply(nil)
+	result, _, err := d.Apply(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

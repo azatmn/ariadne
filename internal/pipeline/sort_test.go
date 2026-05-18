@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func TestSortByTimeOrders(t *testing.T) {
 	}
 
 	s := SortByTime{}
-	result, _, err := s.Apply(points)
+	result, _, err := s.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestSortByTimeAlreadySorted(t *testing.T) {
 	}
 
 	s := SortByTime{}
-	result, _, err := s.Apply(points)
+	result, _, err := s.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +54,7 @@ func TestSortByTimeAlreadySorted(t *testing.T) {
 func TestSortByTimeEmpty(t *testing.T) {
 	s := SortByTime{}
 
-	result, _, err := s.Apply(nil)
+	result, _, err := s.Apply(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

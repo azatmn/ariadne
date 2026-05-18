@@ -113,7 +113,9 @@ func TestLoggerPassesThrough(t *testing.T) {
 }
 
 func TestRequestIDAddsHeader(t *testing.T) {
-	handler := RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	logger := slog.Default()
+
+	handler := RequestID(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -129,7 +131,9 @@ func TestRequestIDAddsHeader(t *testing.T) {
 }
 
 func TestRequestIDUnique(t *testing.T) {
-	handler := RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	logger := slog.Default()
+
+	handler := RequestID(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"ariadne/internal/config"
+	"ariadne/internal/service"
 )
 
 func TestIntegrationRealRoute(t *testing.T) {
@@ -28,7 +29,7 @@ func TestIntegrationRealRoute(t *testing.T) {
 		MaxBodyBytes:        10 << 20,
 	}
 	logger := testLogger()
-	h := NewHandler(cfg, logger)
+	h := NewHandler(service.New(cfg))
 	router := NewRouter(h, logger, cfg.MaxBodyBytes)
 
 	body := `{"routeCompressed":"` + strings.TrimSpace(string(routeData)) + `"}`
@@ -75,7 +76,7 @@ func TestIntegrationHealthEndpoints(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(cfg, logger)
+	h := NewHandler(service.New(cfg))
 	router := NewRouter(h, logger, cfg.MaxBodyBytes)
 
 	tests := []struct {
@@ -107,7 +108,7 @@ func TestIntegrationMethodNotAllowed(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(cfg, logger)
+	h := NewHandler(service.New(cfg))
 	router := NewRouter(h, logger, cfg.MaxBodyBytes)
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/routes/resolve-collisions", nil)

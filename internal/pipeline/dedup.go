@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"time"
 
 	"ariadne/internal/geo"
@@ -13,7 +14,7 @@ type Deduplicate struct {
 
 func (Deduplicate) Name() string { return "deduplicate" }
 
-func (d Deduplicate) Apply(points []geo.Point) ([]geo.Point, []string, error) {
+func (d Deduplicate) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []string, error) {
 	if len(points) < 2 {
 		return points, nil, nil
 	}

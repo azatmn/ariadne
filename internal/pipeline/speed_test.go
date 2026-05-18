@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ func TestFilterBySpeedNormal(t *testing.T) {
 	}
 
 	f := FilterBySpeed{MaxKmh: 150}
-	result, _, err := f.Apply(points)
+	result, _, err := f.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,7 @@ func TestFilterBySpeedTeleport(t *testing.T) {
 	}
 
 	f := FilterBySpeed{MaxKmh: 150}
-	result, _, err := f.Apply(points)
+	result, _, err := f.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestFilterBySpeedSameTime(t *testing.T) {
 	}
 
 	f := FilterBySpeed{MaxKmh: 150}
-	result, _, err := f.Apply(points)
+	result, _, err := f.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestFilterBySpeedSameTime(t *testing.T) {
 func TestFilterBySpeedEmpty(t *testing.T) {
 	f := FilterBySpeed{MaxKmh: 150}
 
-	result, _, err := f.Apply(nil)
+	result, _, err := f.Apply(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestFilterBySpeedEmpty(t *testing.T) {
 		t.Errorf("expected 0 points, got %d", len(result))
 	}
 
-	result, _, err = f.Apply([]geo.Point{{Lon: 37.0, Lat: 55.0}})
+	result, _, err = f.Apply(context.Background(), []geo.Point{{Lon: 37.0, Lat: 55.0}})
 	if err != nil {
 		t.Fatal(err)
 	}

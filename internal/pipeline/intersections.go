@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"slices"
 
 	"ariadne/internal/geo"
@@ -14,7 +15,7 @@ type RemoveSelfIntersections struct {
 
 func (RemoveSelfIntersections) Name() string { return "remove_self_intersections" }
 
-func (r RemoveSelfIntersections) Apply(points []geo.Point) ([]geo.Point, []string, error) {
+func (r RemoveSelfIntersections) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []string, error) {
 	if len(points) < 4 {
 		return points, nil, nil
 	}

@@ -10,6 +10,7 @@ import (
 
 	"ariadne/internal/api"
 	"ariadne/internal/config"
+	"ariadne/internal/service"
 )
 
 func main() {
@@ -23,7 +24,8 @@ func main() {
 	_ = level.UnmarshalText([]byte(cfg.LogLevel))
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
-	handler := api.NewHandler(cfg, logger)
+	svc := service.New(cfg)
+	handler := api.NewHandler(svc)
 	router := api.NewRouter(handler, logger, cfg.MaxBodyBytes)
 
 	srv := &http.Server{

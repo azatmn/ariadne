@@ -1,7 +1,7 @@
 package pipeline
 
 import (
-	"log/slog"
+	"context"
 	"testing"
 	"time"
 
@@ -32,10 +32,9 @@ func TestRunFullPipeline(t *testing.T) {
 		MaxLoopSeconds:      10,
 	}
 
-	logger := slog.Default()
-	pl := New(p, logger)
+	pl := New(p)
 
-	result, _, err := pl.Run(points)
+	result, _, _, err := pl.Run(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +67,9 @@ func TestRunCollectsWarnings(t *testing.T) {
 		MaxLoopSeconds:      10,
 	}
 
-	logger := slog.Default()
-	pl := New(p, logger)
+	pl := New(p)
 
-	_, warnings, err := pl.Run(points)
+	_, warnings, _, err := pl.Run(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,10 +98,9 @@ func TestRunEarlyExitFewPoints(t *testing.T) {
 		MaxLoopSeconds:      10,
 	}
 
-	logger := slog.Default()
-	pl := New(p, logger)
+	pl := New(p)
 
-	result, _, err := pl.Run(points)
+	result, _, _, err := pl.Run(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,10 +120,9 @@ func TestRunEmpty(t *testing.T) {
 		MaxLoopSeconds:      10,
 	}
 
-	logger := slog.Default()
-	pl := New(p, logger)
+	pl := New(p)
 
-	result, _, err := pl.Run(nil)
+	result, _, _, err := pl.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

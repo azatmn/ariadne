@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestRemoveSmallLoop(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, warnings, err := r.Apply(points)
+	result, warnings, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func TestKeepBigLoop(t *testing.T) {
 		MaxLoopSeconds:   10, // петля длится 60с > 10с → считаем реальной
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestNoIntersections(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestKeepBigLoopByMeters(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestEmptyAndShort(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(nil)
+	result, _, err := r.Apply(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestEmptyAndShort(t *testing.T) {
 		t.Errorf("nil: expected 0, got %d", len(result))
 	}
 
-	result, _, err = r.Apply([]geo.Point{{Lon: 37.0, Lat: 55.0}})
+	result, _, err = r.Apply(context.Background(), []geo.Point{{Lon: 37.0, Lat: 55.0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestMultipleIntersections(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +209,7 @@ func TestLoopAtStart(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +247,7 @@ func TestLoopAtEnd(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +279,7 @@ func TestThreePoints(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func TestAllSameCoordinates(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, _, err := r.Apply(points)
+	result, _, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestIntersectMaxIterLimit(t *testing.T) {
 		MaxLoopSeconds:   10,
 	}
 
-	result, warnings, err := r.Apply(points)
+	result, warnings, err := r.Apply(context.Background(), points)
 	if err != nil {
 		t.Fatal(err)
 	}

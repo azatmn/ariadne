@@ -119,6 +119,7 @@ internal/
   config/                парсинг env-переменных
   codec/                 base64 <-> zlib <-> JSON <-> []geo.Point
   geo/                   Point, Haversine, длина маршрута, пересечение отрезков
+  logger/                scoped логгер в context (request_id)
   pipeline/              интерфейс Stage + этапы (sort, speed, dedup, intersections)
   api/                   HTTP: router (chi), handler, middleware, errors, health
   osrm/                  заготовка под map matching (пост-MVP)
@@ -127,7 +128,7 @@ internal/
 ### Middleware (порядок снаружи внутрь)
 
 1. **Recover** — ловит паники, возвращает 500
-2. **RequestID** — генерирует UUID v4, ставит заголовок `X-Request-ID`
+2. **RequestID** — генерирует UUID v4, ставит заголовок `X-Request-ID`, создаёт scoped логгер с `request_id` в context
 3. **Logger** — логирует метод, путь, статус, время выполнения
 4. **LimitBody** — ограничивает размер тела запроса (`MAX_BODY_BYTES`)
 5. **ErrorMiddleware** — превращает `error` из handler в JSON-ответ с правильным статусом

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"ariadne/internal/logger"
+
 	"github.com/google/uuid"
 )
 
@@ -100,9 +102,16 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func RequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Request-ID", uuid.New().String())
-		next.ServeHTTP(w, r)
-	})
+func RequestID(base *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := uuid.New().String()
+			w.Header().Set("X-Request-ID", id)
+
+			reqLogger := base.With("request_id", id)
+			ctx := logger.ToContext(r.Context(), reqLogger)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

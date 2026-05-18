@@ -1,6 +1,10 @@
 package pipeline
 
-import "ariadne/internal/geo"
+import (
+	"context"
+
+	"ariadne/internal/geo"
+)
 
 type FilterBySpeed struct {
 	MaxKmh float64
@@ -8,7 +12,7 @@ type FilterBySpeed struct {
 
 func (FilterBySpeed) Name() string { return "filter_by_speed" }
 
-func (f FilterBySpeed) Apply(points []geo.Point) ([]geo.Point, []string, error) {
+func (f FilterBySpeed) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []string, error) {
 	if len(points) < 2 {
 		return points, nil, nil
 	}

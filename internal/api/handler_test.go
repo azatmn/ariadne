@@ -13,6 +13,7 @@ import (
 	"ariadne/internal/codec"
 	"ariadne/internal/config"
 	"ariadne/internal/geo"
+	"ariadne/internal/service"
 )
 
 func testLogger() *slog.Logger {
@@ -34,13 +35,13 @@ func testConfig() *config.Config {
 
 func testHandler() http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(testConfig(), logger)
+	h := NewHandler(service.New(testConfig()))
 	return ErrorMiddleware(logger)(h.HandleResolve)
 }
 
 func testHandlerWithConfig(cfg *config.Config) http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(cfg, logger)
+	h := NewHandler(service.New(cfg))
 	return ErrorMiddleware(logger)(h.HandleResolve)
 }
 

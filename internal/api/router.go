@@ -11,7 +11,7 @@ func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64) http.Handler
 	r := chi.NewRouter()
 
 	r.Use(Recover(logger))
-	r.Use(RequestID)
+	r.Use(RequestID(logger))
 	r.Use(Logger(logger))
 	r.Use(LimitBody(maxBodyBytes))
 
