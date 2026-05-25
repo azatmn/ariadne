@@ -60,6 +60,10 @@
 }
 ```
 
+### GET /swagger/*
+
+Swagger UI — интерактивная документация API. Доступна по адресу `/swagger/index.html`. Отключается через `SWAGGER_ENABLED=false`.
+
 ### GET /healthz
 
 Liveness probe. Возвращает `200 ok` пока процесс жив.
@@ -176,6 +180,7 @@ internal/
   grpcapi/               gRPC: handler, interceptors, server, health
   osrm/                  заготовка под map matching (пост-MVP)
 proto/                   Proto-файлы (.proto)
+swagger/                 сгенерированная Swagger-спека (swag init)
 ```
 
 ### REST Middleware (порядок снаружи внутрь)
@@ -215,6 +220,8 @@ proto/                   Proto-файлы (.proto)
 | `MAX_LOOP_METERS` | `100` | петли больше — считаем реальными (не удаляем) |
 | `MAX_LOOP_SECONDS` | `10` | петли длиннее — считаем реальными (не удаляем) |
 | `INTERSECT_MAX_ITER` | `10000` | лимит итераций поиска пересечений |
+| **Swagger** | | |
+| `SWAGGER_ENABLED` | `true` | `false` — отключает `/swagger/*` эндпоинт |
 | **Logging** | | |
 | `LOG_LEVEL` | `info` | уровень логирования (debug/info/warn/error) |
 | **OSRM (пост-MVP)** | | |
@@ -227,6 +234,8 @@ proto/                   Proto-файлы (.proto)
 - [google/uuid](https://github.com/google/uuid) — генерация UUID v4
 - [google.golang.org/grpc](https://pkg.go.dev/google.golang.org/grpc) — gRPC сервер, interceptors, health check
 - [google.golang.org/protobuf](https://pkg.go.dev/google.golang.org/protobuf) — protobuf runtime
+- [swaggo/swag](https://github.com/swaggo/swag) — генерация OpenAPI-спеки из аннотаций
+- [swaggo/http-swagger](https://github.com/swaggo/http-swagger) — Swagger UI middleware для chi
 
 Остальное — стандартная библиотека Go.
 
@@ -267,10 +276,17 @@ make proto
 
 Требует установленных `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc`.
 
+### Генерация Swagger
+
+```bash
+make swagger
+```
+
+Требует установленного `swag` (`go install github.com/swaggo/swag/cmd/swag@latest`). Генерирует `swagger/docs.go` и `swagger/swagger.json` из аннотаций в коде.
+
 ## Пост-MVP
 
 - OSRM map matching — snap на дороги через внешний OSRM-сервис (заменит `RemoveSelfIntersections`)
 - Simplify — упрощение маршрута алгоритмом Дугласа-Пекера
 - FilterByAcceleration — фильтр по ускорению (ловит GPS-глюки с резким набором скорости, которые проходят через speed-фильтр)
 - Auth middleware — Bearer token из env
-- Swagger (swaggo) — документация REST API с UI

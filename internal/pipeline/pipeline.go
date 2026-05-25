@@ -31,10 +31,10 @@ type Params struct {
 }
 
 type StageStats struct {
-	Name         string `json:"name"`
-	PointsBefore int    `json:"pointsBefore"`
-	PointsAfter  int    `json:"pointsAfter"`
-	Elapsed      string `json:"elapsed"`
+	Name         string `json:"name" example:"RemoveSelfIntersections"`
+	PointsBefore int    `json:"pointsBefore" example:"3016"`
+	PointsAfter  int    `json:"pointsAfter" example:"2981"`
+	Elapsed      string `json:"elapsed" example:"47.123ms"`
 }
 
 // Pipeline — упорядоченная цепочка Stage.

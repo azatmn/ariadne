@@ -9,23 +9,23 @@ import (
 
 	"ariadne/internal/codec"
 	"ariadne/internal/logger"
+	"ariadne/internal/pipeline"
 	"ariadne/internal/service"
 )
 
 type ResolveRequest struct {
-	RouteCompressed string `json:"routeCompressed"`
-	ReturnDebug     bool   `json:"returnDebug,omitempty"`
+	RouteCompressed string `json:"routeCompressed" example:"eJy..." `
+	ReturnDebug     bool   `json:"returnDebug,omitempty" example:"false"`
 }
 
-// ResolveResponse — успешный ответ.
 type ResolveResponse struct {
-	RouteCompressed    string   `json:"routeCompressed"`
-	LengthMeters       float64  `json:"lengthMeters"`
-	LengthBeforeMeters float64  `json:"lengthBeforeMeters"`
-	PointsCount        int      `json:"pointsCount"`
-	RemovedPointsCount int      `json:"removedPointsCount"`
-	Warnings           []string `json:"warnings,omitempty"`
-	Debug              any      `json:"debug,omitempty"`
+	RouteCompressed    string                `json:"routeCompressed" example:"eJy..."`
+	LengthMeters       float64               `json:"lengthMeters" example:"1168113.85"`
+	LengthBeforeMeters float64               `json:"lengthBeforeMeters" example:"1170260.79"`
+	PointsCount        int                   `json:"pointsCount" example:"2981"`
+	RemovedPointsCount int                   `json:"removedPointsCount" example:"35"`
+	Warnings           []string              `json:"warnings,omitempty" example:"intersect: max iterations reached"`
+	Debug              []pipeline.StageStats `json:"debug,omitempty"`
 }
 
 type Handler struct {
@@ -38,6 +38,19 @@ func NewHandler(svc *service.Service, maxDecompressedBytes int64, resolveTimeout
 	return &Handler{svc: svc, maxDecompressedBytes: maxDecompressedBytes, resolveTimeout: resolveTimeout}
 }
 
+// HandleResolve обрабатывает маршрут через pipeline очистки.
+// @Summary      Устранение коллизий GPS-маршрута
+// @Description  Принимает сжатый маршрут, прогоняет через pipeline (sort, speed filter, dedup, intersections), возвращает очищенный результат
+// @Tags         routes
+// @Accept       json
+// @Produce      json
+// @Param        body body ResolveRequest true "Маршрут для обработки"
+// @Success      200 {object} ResolveResponse
+// @Failure      400 {object} ErrorPayload
+// @Failure      413 {object} ErrorPayload
+// @Failure      422 {object} ErrorPayload
+// @Failure      500 {object} ErrorPayload
+// @Router       /v1/routes/resolve-collisions [post]
 func (h *Handler) HandleResolve(w http.ResponseWriter, r *http.Request) error {
 	var req ResolveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

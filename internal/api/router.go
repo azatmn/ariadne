@@ -5,9 +5,10 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
-func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64) http.Handler {
+func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64, swaggerEnabled bool) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(Recover(logger))
@@ -20,6 +21,10 @@ func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64) http.Handler
 	r.Get("/healthz", Healthz)
 	r.Get("/readyz", Readyz)
 	r.Post("/v1/routes/resolve-collisions", errMw(h.HandleResolve))
+
+	if swaggerEnabled {
+		r.Get("/swagger/*", httpSwagger.WrapHandler)
+	}
 
 	return r
 }

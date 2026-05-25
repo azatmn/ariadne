@@ -9,11 +9,19 @@ import (
 	"os/signal"
 	"syscall"
 
+	_ "ariadne/swagger"
+
 	"ariadne/internal/api"
 	"ariadne/internal/config"
 	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
 )
+
+// @title Ariadne API
+// @version 1.0
+// @description Сервис устранения коллизий GPS-маршрутов
+// @host localhost:8080
+// @BasePath /
 
 func main() {
 	cfg, err := config.Load()
@@ -32,7 +40,7 @@ func main() {
 
 	// HTTP
 	httpHandler := api.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes)
+	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes, cfg.SwaggerEnabled)
 
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,

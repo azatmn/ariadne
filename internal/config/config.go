@@ -30,6 +30,8 @@ type Config struct {
 	UseOSRM bool
 	OSRMURL string
 
+	SwaggerEnabled bool
+
 	LogLevel string
 }
 
@@ -57,6 +59,9 @@ func Load() (*Config, error) {
 		MaxLoopSeconds:      envFloat("MAX_LOOP_SECONDS", 10),
 		IntersectMaxIter:    envInt("INTERSECT_MAX_ITER", 10_000),
 		// SimplifyMinMeters: envFloat("SIMPLIFY_MIN_METERS", 2.0), // post-MVP: Дугласа-Пекера
+
+		// Swagger
+		SwaggerEnabled: envBool("SWAGGER_ENABLED", true),
 
 		// Logging
 		LogLevel: envStr("LOG_LEVEL", "info"),
@@ -119,18 +124,18 @@ func envFloat(key string, def float64) float64 {
 	return f
 }
 
-//func envBool(key string, def bool) bool {
-//	v := os.Getenv(key)
-//	if v == "" {
-//		return def
-//	}
-//	b, err := strconv.ParseBool(v)
-//	if err != nil {
-//		slog.Warn("invalid env value, using default", "key", key, "value", v, "default", def, "error", err)
-//		return def
-//	}
-//	return b
-//}
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Warn("invalid env value, using default", "key", key, "value", v, "default", def, "error", err)
+		return def
+	}
+	return b
+}
 
 func envDuration(key string, def time.Duration) time.Duration {
 	v := os.Getenv(key)

@@ -33,7 +33,7 @@ func TestIntegrationRealRoute(t *testing.T) {
 	}
 	logger := testLogger()
 	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	router := NewRouter(h, logger, cfg.MaxBodyBytes)
+	router := NewRouter(h, logger, cfg.MaxBodyBytes, false)
 
 	body := `{"routeCompressed":"` + strings.TrimSpace(string(routeData)) + `"}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/routes/resolve-collisions", strings.NewReader(body))
@@ -80,7 +80,7 @@ func TestIntegrationHealthEndpoints(t *testing.T) {
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
 	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	router := NewRouter(h, logger, cfg.MaxBodyBytes)
+	router := NewRouter(h, logger, cfg.MaxBodyBytes, false)
 
 	tests := []struct {
 		name string
@@ -112,7 +112,7 @@ func TestIntegrationMethodNotAllowed(t *testing.T) {
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
 	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	router := NewRouter(h, logger, cfg.MaxBodyBytes)
+	router := NewRouter(h, logger, cfg.MaxBodyBytes, false)
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/routes/resolve-collisions", nil)
 	w := httptest.NewRecorder()

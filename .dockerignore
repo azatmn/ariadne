@@ -2,7 +2,12 @@
 .idea
 .claude
 .DS_Store
-docs
+.env
+.env.local
+.env.example
+docs/
+proto/
+swagger/swagger.json
 *.md
 Dockerfile
 .dockerignore
