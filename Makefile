@@ -1,4 +1,4 @@
-.PHONY: run test lint
+.PHONY: run test lint proto
 
 run:
 	go run ./cmd/server
@@ -8,3 +8,8 @@ test:
 
 lint:
 	go vet ./...
+
+proto:
+	protoc --go_out=. --go_opt=module=ariadne \
+		--go-grpc_out=. --go-grpc_opt=module=ariadne \
+		--proto_path=proto proto/route.proto

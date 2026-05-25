@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"ariadne/internal/logger"
 )
 
 // Машиночитаемые коды ошибок (по ТЗ).
@@ -73,5 +75,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, code, message string) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		logger.FromContext(r.Context()).Error("failed to write error response", "error", err)
+	}
 }

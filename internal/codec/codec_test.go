@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func TestDecodeEncode(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 
-	decoded, err := Decode(encoded)
+	decoded, err := Decode(encoded, 100<<20)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestDecodeEncode(t *testing.T) {
 }
 
 func TestDecodeInvalidBase64(t *testing.T) {
-	_, err := Decode("not-valid-base64!!!")
+	_, err := Decode("not-valid-base64!!!", 100<<20)
 	if err == nil {
 		t.Fatal("expected error for invalid base64")
 	}
@@ -50,10 +51,47 @@ func TestDecodeInvalidBase64(t *testing.T) {
 
 func TestDecodeInvalidZlib(t *testing.T) {
 	// валидный base64, но внутри мусор — не zlib
-	_, err := Decode("aGVsbG8gd29ybGQ=")
+	_, err := Decode("aGVsbG8gd29ybGQ=", 100<<20)
 	if err == nil {
 		t.Fatal("expected error for invalid zlib")
 	}
+}
+
+func TestDecodeDecompressedTooLarge(t *testing.T) {
+	points := []geo.Point{
+		{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Lon: 37.0, Lat: 55.0},
+		{Time: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC), Lon: 37.1, Lat: 55.1},
+	}
+	encoded, err := Encode(points)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	_, err = Decode(encoded, 10)
+	if err == nil {
+		t.Fatal("expected error for decompressed data too large")
+	}
+	if !errors.Is(err, ErrDecompressedTooLarge) {
+		t.Errorf("expected ErrDecompressedTooLarge, got: %v", err)
+	}
+}
+
+func FuzzDecode(f *testing.F) {
+	f.Add("")
+	f.Add("not-valid-base64!!!")
+	f.Add("aGVsbG8gd29ybGQ=")
+
+	points := []geo.Point{
+		{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Lon: 37.0, Lat: 55.0},
+		{Time: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC), Lon: 37.1, Lat: 55.1},
+	}
+	if encoded, err := Encode(points); err == nil {
+		f.Add(encoded)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		Decode(input, 1<<20)
+	})
 }
 
 func TestEncodeEmpty(t *testing.T) {
@@ -62,7 +100,7 @@ func TestEncodeEmpty(t *testing.T) {
 		t.Fatalf("Encode empty: %v", err)
 	}
 
-	decoded, err := Decode(encoded)
+	decoded, err := Decode(encoded, 100<<20)
 	if err != nil {
 		t.Fatalf("Decode empty: %v", err)
 	}

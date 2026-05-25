@@ -22,26 +22,29 @@ func testLogger() *slog.Logger {
 
 func testConfig() *config.Config {
 	return &config.Config{
-		DedupDistanceMeters: 2.0,
-		DedupTimeGap:        60 * time.Second,
-		SimplifyMinMeters:   2.0,
-		MaxPoints:           50000,
-		IntersectMaxIter:    100,
-		MaxSpeedKmh:         150,
-		MaxLoopMeters:       100,
-		MaxLoopSeconds:      10,
+		DedupDistanceMeters:  2.0,
+		DedupTimeGap:         60 * time.Second,
+		SimplifyMinMeters:    2.0,
+		MaxPoints:            50000,
+		IntersectMaxIter:     100,
+		MaxSpeedKmh:          150,
+		MaxLoopMeters:        100,
+		MaxLoopSeconds:       10,
+		MaxDecompressedBytes: 100 << 20,
+		ResolveTimeout:       25 * time.Second,
 	}
 }
 
 func testHandler() http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(service.New(testConfig()))
+	cfg := testConfig()
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	return ErrorMiddleware(logger)(h.HandleResolve)
 }
 
 func testHandlerWithConfig(cfg *config.Config) http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(service.New(cfg))
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	return ErrorMiddleware(logger)(h.HandleResolve)
 }
 

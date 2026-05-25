@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package ariadne.v1;
+
+option go_package = "ariadne/internal/gen/ariadne;ariadnepb";
+
+service RouteService {
+  rpc ResolveCollisions(ResolveCollisionsRequest) returns (ResolveCollisionsResponse);
+}
+
+message ResolveCollisionsRequest {
+  string route_compressed = 1;
+  bool return_debug = 2;
+}
+
+message ResolveCollisionsResponse {
+  string route_compressed = 1;
+  double length_meters = 2;
+  double length_before_meters = 3;
+  int32 points_count = 4;
+  int32 removed_points_count = 5;
+  repeated string warnings = 6;
+  repeated StageStats debug = 7;
+}
+
+message StageStats {
+  string name = 1;
+  int32 points_before = 2;
+  int32 points_after = 3;
+  string elapsed = 4;
+}

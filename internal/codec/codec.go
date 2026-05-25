@@ -5,12 +5,15 @@ import (
 	"compress/zlib"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"ariadne/internal/geo"
 )
+
+var ErrDecompressedTooLarge = errors.New("codec: decompressed data too large")
 
 // wirePoint — формат точки на проводе (JSON от PHP backend).
 // PHP gzcompress() = zlib (заголовок 0x78), НЕ gzip.
@@ -24,7 +27,7 @@ type wirePos struct {
 	Y float64 `json:"y"` // latitude
 }
 
-func Decode(routeCompressed string) ([]geo.Point, error) {
+func Decode(routeCompressed string, maxDecompressedBytes int64) ([]geo.Point, error) {
 	compressed, err := base64.StdEncoding.DecodeString(routeCompressed)
 	if err != nil {
 		return nil, fmt.Errorf("codec: base64 decode: %w", err)
@@ -38,9 +41,13 @@ func Decode(routeCompressed string) ([]geo.Point, error) {
 		_ = zr.Close()
 	}()
 
-	jsonData, err := io.ReadAll(zr)
+	lr := io.LimitReader(zr, maxDecompressedBytes+1)
+	jsonData, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, fmt.Errorf("codec: zlib read: %w", err)
+	}
+	if int64(len(jsonData)) > maxDecompressedBytes {
+		return nil, ErrDecompressedTooLarge
 	}
 
 	var wire []wirePoint

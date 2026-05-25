@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,6 +11,7 @@ import (
 
 	"ariadne/internal/api"
 	"ariadne/internal/config"
+	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
 )
 
@@ -21,41 +23,68 @@ func main() {
 	}
 
 	var level slog.Level
-	_ = level.UnmarshalText([]byte(cfg.LogLevel))
+	if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
+		slog.Warn("invalid LOG_LEVEL, using default INFO", "value", cfg.LogLevel, "error", err)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
 	svc := service.New(cfg)
-	handler := api.NewHandler(svc)
-	router := api.NewRouter(handler, logger, cfg.MaxBodyBytes)
 
-	srv := &http.Server{
+	// HTTP
+	httpHandler := api.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes)
+
+	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      router,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 	}
 
+	// gRPC
+	grpcHandler := grpcapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	grpcSrv := grpcapi.NewServer(grpcHandler, logger, cfg.GRPCMaxRecvMsgSize)
+
+	errCh := make(chan error, 2)
+
 	go func() {
-		logger.Info("server starting", "addr", srv.Addr)
-		if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
+		logger.Info("http server starting", "addr", httpSrv.Addr)
+		errCh <- httpSrv.ListenAndServe()
+	}()
+
+	go func() {
+		addr := ":" + cfg.GRPCPort
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			errCh <- err
+			return
 		}
+		logger.Info("grpc server starting", "addr", addr)
+		errCh <- grpcSrv.Serve(lis)
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
 
-	logger.Info("shutting down", "signal", sig.String())
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	case sig := <-quit:
+		logger.Info("shutting down", "signal", sig.String())
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
 
-	if err = srv.Shutdown(ctx); err != nil {
-		logger.Error("shutdown error", "error", err)
-		os.Exit(1)
+		grpcSrv.GracefulStop()
+
+		if err := httpSrv.Shutdown(ctx); err != nil {
+			logger.Error("http shutdown error", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("servers stopped")
 	}
-
-	logger.Info("server stopped")
 }

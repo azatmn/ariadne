@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"ariadne/internal/config"
 	"ariadne/internal/service"
@@ -19,17 +20,19 @@ func TestIntegrationRealRoute(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		DedupDistanceMeters: 2.0,
-		DedupTimeGap:        60_000_000_000,
-		MaxPoints:           50_000,
-		IntersectMaxIter:    10_000,
-		MaxSpeedKmh:         150,
-		MaxLoopMeters:       100,
-		MaxLoopSeconds:      10,
-		MaxBodyBytes:        10 << 20,
+		DedupDistanceMeters:  2.0,
+		DedupTimeGap:         60_000_000_000,
+		MaxPoints:            50_000,
+		IntersectMaxIter:     10_000,
+		MaxSpeedKmh:          150,
+		MaxLoopMeters:        100,
+		MaxLoopSeconds:       10,
+		MaxBodyBytes:         10 << 20,
+		MaxDecompressedBytes: 100 << 20,
+		ResolveTimeout:       25 * time.Second,
 	}
 	logger := testLogger()
-	h := NewHandler(service.New(cfg))
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes)
 
 	body := `{"routeCompressed":"` + strings.TrimSpace(string(routeData)) + `"}`
@@ -76,7 +79,7 @@ func TestIntegrationHealthEndpoints(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(service.New(cfg))
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes)
 
 	tests := []struct {
@@ -108,7 +111,7 @@ func TestIntegrationMethodNotAllowed(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(service.New(cfg))
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes)
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/routes/resolve-collisions", nil)

@@ -15,12 +15,16 @@ type RemoveSelfIntersections struct {
 
 func (RemoveSelfIntersections) Name() string { return "remove_self_intersections" }
 
-func (r RemoveSelfIntersections) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []string, error) {
+func (r RemoveSelfIntersections) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []string, error) {
 	if len(points) < 4 {
 		return points, nil, nil
 	}
 
 	for iter := 0; iter < r.IntersectMaxIter; iter++ {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+
 		from, to, found := r.findLoop(points)
 		if !found {
 			return points, nil, nil

@@ -1,0 +1,8 @@
+services:
+  ariadne:
+    build: .
+    env_file: .env
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+      - "${GRPC_PORT:-9090}:${GRPC_PORT:-9090}"
+    restart: unless-stopped
