@@ -10,5 +10,7 @@ proto/
 swagger/swagger.json
 *.md
 Dockerfile
+Dockerfile.ci
 .dockerignore
+.gitlab-ci.yml
 internal/api/testdata

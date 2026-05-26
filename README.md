@@ -122,7 +122,7 @@ routeCompressed
 
 ### ariadne.v1.RouteService/ResolveCollisions
 
-```protobuf
+```text
 message ResolveCollisionsRequest {
   string route_compressed = 1;
   bool return_debug = 2;
@@ -162,7 +162,7 @@ message ResolveCollisionsResponse {
 
 ### Server reflection
 
-Включен — Postman и `grpcurl` автоматически обнаруживают все методы без загрузки proto-файла.
+Управляется переменной `GRPC_REFLECTION` (по умолчанию `false`). При `GRPC_REFLECTION=true` — Postman и `grpcurl` автоматически обнаруживают все методы без загрузки proto-файла.
 
 ## Архитектура
 
@@ -221,8 +221,9 @@ swagger/                 сгенерированная Swagger-спека (swag
 | `MAX_LOOP_SECONDS` | `10` | петли длиннее — считаем реальными (не удаляем) |
 | `INTERSECT_MAX_ITER` | `10000` | лимит итераций поиска пересечений |
 | **Swagger** | | |
-| `SWAGGER_ENABLED` | `true` | `false` — отключает `/swagger/*` эндпоинт |
+| `SWAGGER_ENABLED` | `false` | `true` — включает `/swagger/*` эндпоинт |
 | **Logging** | | |
+| `GRPC_REFLECTION` | `false` | `true` — включает gRPC server reflection |
 | `LOG_LEVEL` | `info` | уровень логирования (debug/info/warn/error) |
 | **OSRM (пост-MVP)** | | |
 | `USE_OSRM` | `false` | включить OSRM map matching |
@@ -236,6 +237,7 @@ swagger/                 сгенерированная Swagger-спека (swag
 - [google.golang.org/protobuf](https://pkg.go.dev/google.golang.org/protobuf) — protobuf runtime
 - [swaggo/swag](https://github.com/swaggo/swag) — генерация OpenAPI-спеки из аннотаций
 - [swaggo/http-swagger](https://github.com/swaggo/http-swagger) — Swagger UI middleware для chi
+- [stretchr/testify](https://github.com/stretchr/testify) — assert/require для тестов
 
 Остальное — стандартная библиотека Go.
 
@@ -283,6 +285,21 @@ make swagger
 ```
 
 Требует установленного `swag` (`go install github.com/swaggo/swag/cmd/swag@latest`). Генерирует `swagger/docs.go` и `swagger/swagger.json` из аннотаций в коде.
+
+## CI/CD (GitLab)
+
+Pipeline запускается автоматически при пуше в GitLab:
+
+```
+git push → .gitlab-ci.yml →
+  1. test:   go vet + go test -race (на каждый пуш и MR)
+  2. build:  docker build → push в GitLab Registry (только main)
+  3. deploy: ssh на сервер → docker pull → docker compose up -d (только main)
+```
+
+- Тесты бегут в кастомном образе `$CI_REGISTRY_IMAGE/ci:1.26` (Go + gcc для race detector)
+- Go-модули кешируются между запусками (`/go/pkg/mod/`)
+- Docker-образ тегается `$CI_COMMIT_SHORT_SHA` + `latest`
 
 ## Пост-MVP
 
