@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"ariadne/internal/geo"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRemoveSmallLoop(t *testing.T) {
@@ -29,16 +32,11 @@ func TestRemoveSmallLoop(t *testing.T) {
 	}
 
 	result, warnings, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) >= len(points) {
-		t.Errorf("expected loop to be removed, got %d points (was %d)", len(result), len(points))
-	}
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %v", warnings)
-	}
+	assert.Less(t, len(result), len(points),
+		"expected loop to be removed, got %d points (was %d)", len(result), len(points))
+	assert.Empty(t, warnings, "expected no warnings")
 	t.Logf("before: %d points, after: %d points", len(points), len(result))
 }
 
@@ -61,13 +59,10 @@ func TestKeepBigLoop(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != len(points) {
-		t.Errorf("expected all %d points preserved (big loop), got %d", len(points), len(result))
-	}
+	assert.Len(t, result, len(points),
+		"expected all %d points preserved (big loop)", len(points))
 }
 
 func TestNoIntersections(t *testing.T) {
@@ -88,13 +83,9 @@ func TestNoIntersections(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 4 {
-		t.Errorf("expected 4 points (no intersections), got %d", len(result))
-	}
+	assert.Len(t, result, 4, "expected 4 points (no intersections)")
 }
 
 func TestKeepBigLoopByMeters(t *testing.T) {
@@ -116,13 +107,10 @@ func TestKeepBigLoopByMeters(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != len(points) {
-		t.Errorf("expected all %d points (loop too big in meters), got %d", len(points), len(result))
-	}
+	assert.Len(t, result, len(points),
+		"expected all %d points (loop too big in meters)", len(points))
 }
 
 func TestEmptyAndShort(t *testing.T) {
@@ -133,20 +121,12 @@ func TestEmptyAndShort(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 0 {
-		t.Errorf("nil: expected 0, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 0, "nil: expected 0")
 
 	result, _, err = r.Apply(context.Background(), []geo.Point{{Lon: 37.0, Lat: 55.0}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 1 {
-		t.Errorf("single point: expected 1, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 1, "single point: expected 1")
 }
 
 func TestMultipleIntersections(t *testing.T) {
@@ -177,14 +157,11 @@ func TestMultipleIntersections(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Обе петли должны быть вырезаны — точек должно стать значительно меньше
-	if len(result) >= len(points)-2 {
-		t.Errorf("expected both loops removed, got %d points (was %d)", len(result), len(points))
-	}
+	assert.Less(t, len(result), len(points)-2,
+		"expected both loops removed, got %d points (was %d)", len(result), len(points))
 	t.Logf("before: %d points, after: %d points", len(points), len(result))
 }
 
@@ -210,19 +187,14 @@ func TestLoopAtStart(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) >= len(points) {
-		t.Errorf("expected loop at start removed, got %d points (was %d)", len(result), len(points))
-	}
+	assert.Less(t, len(result), len(points),
+		"expected loop at start removed, got %d points (was %d)", len(result), len(points))
 
 	// Прямой участок в конце должен остаться
 	last := result[len(result)-1]
-	if last.Lat != 55.756900 {
-		t.Errorf("expected last point preserved, got Lat=%f", last.Lat)
-	}
+	assert.Equal(t, 55.756900, last.Lat, "expected last point preserved")
 	t.Logf("before: %d points, after: %d points", len(points), len(result))
 }
 
@@ -248,18 +220,13 @@ func TestLoopAtEnd(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) >= len(points) {
-		t.Errorf("expected loop at end removed, got %d points (was %d)", len(result), len(points))
-	}
+	assert.Less(t, len(result), len(points),
+		"expected loop at end removed, got %d points (was %d)", len(result), len(points))
 
 	// Первая точка прямого участка должна остаться
-	if result[0].Lat != 55.756900 {
-		t.Errorf("expected first point preserved, got Lat=%f", result[0].Lat)
-	}
+	assert.Equal(t, 55.756900, result[0].Lat, "expected first point preserved")
 	t.Logf("before: %d points, after: %d points", len(points), len(result))
 }
 
@@ -280,13 +247,9 @@ func TestThreePoints(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 3 {
-		t.Errorf("expected 3 points unchanged, got %d", len(result))
-	}
+	assert.Len(t, result, 3, "expected 3 points unchanged")
 }
 
 func TestAllSameCoordinates(t *testing.T) {
@@ -307,9 +270,7 @@ func TestAllSameCoordinates(t *testing.T) {
 	}
 
 	result, _, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Не должно быть паники или бесконечного цикла
 	t.Logf("same coords: %d -> %d points", len(points), len(result))
@@ -334,14 +295,9 @@ func TestIntersectMaxIterLimit(t *testing.T) {
 	}
 
 	result, warnings, err := r.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != len(points) {
-		t.Errorf("IntersectMaxIter=0 should skip processing, got %d points (was %d)", len(result), len(points))
-	}
-	if len(warnings) != 1 {
-		t.Errorf("expected 1 warning about max iterations, got %d", len(warnings))
-	}
+	assert.Len(t, result, len(points),
+		"IntersectMaxIter=0 should skip processing")
+	assert.Len(t, warnings, 1, "expected 1 warning about max iterations")
 }

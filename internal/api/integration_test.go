@@ -11,13 +11,15 @@ import (
 
 	"ariadne/internal/config"
 	"ariadne/internal/service"
+	_ "ariadne/swagger"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIntegrationRealRoute(t *testing.T) {
 	routeData, err := os.ReadFile("testdata/route_3016.txt")
-	if err != nil {
-		t.Fatalf("cannot read test route: %v", err)
-	}
+	require.NoError(t, err, "cannot read test route")
 
 	cfg := &config.Config{
 		DedupDistanceMeters:  2.0,
@@ -42,37 +44,20 @@ func TestIntegrationRealRoute(t *testing.T) {
 
 	router.ServeHTTP(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "response body: %s", w.Body.String())
 
 	var resp ResolveResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	err = json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err, "failed to decode response")
 
-	if resp.RouteCompressed == "" {
-		t.Error("routeCompressed is empty")
-	}
-	if resp.PointsCount == 0 {
-		t.Error("pointsCount should be > 0")
-	}
-	if resp.LengthMeters <= 0 {
-		t.Error("lengthMeters should be > 0")
-	}
-	if resp.PointsCount >= 3016 {
-		t.Errorf("expected fewer points after cleanup, got %d", resp.PointsCount)
-	}
-	if resp.RemovedPointsCount == 0 {
-		t.Error("expected some points to be removed")
-	}
+	assert.NotEmpty(t, resp.RouteCompressed, "routeCompressed is empty")
+	assert.Greater(t, resp.PointsCount, 0, "pointsCount should be > 0")
+	assert.Greater(t, resp.LengthMeters, 0.0, "lengthMeters should be > 0")
+	assert.Less(t, resp.PointsCount, 3016, "expected fewer points after cleanup")
+	assert.Greater(t, resp.RemovedPointsCount, 0, "expected some points to be removed")
 
-	if id := w.Header().Get("X-Request-ID"); id == "" {
-		t.Error("expected X-Request-ID header")
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("want Content-Type application/json, got %s", ct)
-	}
+	assert.NotEmpty(t, w.Header().Get("X-Request-ID"), "expected X-Request-ID header")
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 }
 
 func TestIntegrationHealthEndpoints(t *testing.T) {
@@ -97,14 +82,25 @@ func TestIntegrationHealthEndpoints(t *testing.T) {
 
 			router.ServeHTTP(w, r)
 
-			if w.Code != http.StatusOK {
-				t.Errorf("want 200, got %d", w.Code)
-			}
-			if w.Body.String() != "ok" {
-				t.Errorf("want body 'ok', got %q", w.Body.String())
-			}
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, "ok", w.Body.String())
 		})
 	}
+}
+
+func TestIntegrationSwaggerRoute(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxBodyBytes = 1 << 20
+	logger := testLogger()
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	router := NewRouter(h, logger, cfg.MaxBodyBytes, true)
+
+	r := httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestIntegrationMethodNotAllowed(t *testing.T) {
@@ -119,7 +115,5 @@ func TestIntegrationMethodNotAllowed(t *testing.T) {
 
 	router.ServeHTTP(w, r)
 
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("want 405, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

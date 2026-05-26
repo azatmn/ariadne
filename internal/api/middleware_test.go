@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRecoverCatchesPanic(t *testing.T) {
@@ -22,17 +25,12 @@ func TestRecoverCatchesPanic(t *testing.T) {
 
 	handler.ServeHTTP(w, r)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("want 500, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 
 	var payload ErrorPayload
-	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if payload.Error.Code != CodeInternal {
-		t.Errorf("want code %s, got %s", CodeInternal, payload.Error.Code)
-	}
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode response")
+	assert.Equal(t, CodeInternal, payload.Error.Code)
 }
 
 func TestRecoverNoPanic(t *testing.T) {
@@ -47,9 +45,7 @@ func TestRecoverNoPanic(t *testing.T) {
 
 	handler.ServeHTTP(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestLimitBodyAllows(t *testing.T) {
@@ -64,12 +60,8 @@ func TestLimitBodyAllows(t *testing.T) {
 
 	handler.ServeHTTP(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", w.Code)
-	}
-	if w.Body.String() != "small body" {
-		t.Errorf("want body passed through, got %q", w.Body.String())
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "small body", w.Body.String())
 }
 
 func TestLimitBodyRejects(t *testing.T) {
@@ -86,9 +78,14 @@ func TestLimitBodyRejects(t *testing.T) {
 
 	// handler получит обрезанное body (http.MaxBytesReader)
 	// или ошибку при чтении
-	if w.Body.Len() >= 20 {
-		t.Errorf("expected body to be truncated, got %d bytes", w.Body.Len())
-	}
+	assert.Less(t, w.Body.Len(), 20, "expected body to be truncated")
+}
+
+func TestStatusWriterUnwrap(t *testing.T) {
+	inner := httptest.NewRecorder()
+	sw := &statusWriter{ResponseWriter: inner}
+
+	assert.Equal(t, inner, sw.Unwrap(), "Unwrap should return the original ResponseWriter")
 }
 
 func TestLoggerPassesThrough(t *testing.T) {
@@ -104,12 +101,8 @@ func TestLoggerPassesThrough(t *testing.T) {
 
 	handler.ServeHTTP(w, r)
 
-	if w.Code != http.StatusCreated {
-		t.Errorf("want 201, got %d", w.Code)
-	}
-	if w.Body.String() != "ok" {
-		t.Errorf("want body 'ok', got %q", w.Body.String())
-	}
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, "ok", w.Body.String())
 }
 
 func TestRequestIDAddsHeader(t *testing.T) {
@@ -124,10 +117,7 @@ func TestRequestIDAddsHeader(t *testing.T) {
 
 	handler.ServeHTTP(w, r)
 
-	id := w.Header().Get("X-Request-ID")
-	if id == "" {
-		t.Error("expected X-Request-ID header, got empty")
-	}
+	assert.NotEmpty(t, w.Header().Get("X-Request-ID"), "expected X-Request-ID header")
 }
 
 func TestRequestIDUnique(t *testing.T) {
@@ -148,7 +138,5 @@ func TestRequestIDUnique(t *testing.T) {
 	id1 := w1.Header().Get("X-Request-ID")
 	id2 := w2.Header().Get("X-Request-ID")
 
-	if id1 == id2 {
-		t.Errorf("expected unique IDs, got same: %s", id1)
-	}
+	assert.NotEqual(t, id1, id2, "expected unique IDs")
 }

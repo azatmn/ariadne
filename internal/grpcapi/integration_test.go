@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -31,9 +33,7 @@ func startTestServer(t *testing.T) ariadnepb.RouteServiceClient {
 	srv := NewServer(h, logger, 10<<20, false)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
+	require.NoError(t, err, "failed to listen")
 
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
@@ -42,9 +42,7 @@ func startTestServer(t *testing.T) ariadnepb.RouteServiceClient {
 		lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if err != nil {
-		t.Fatalf("failed to dial: %v", err)
-	}
+	require.NoError(t, err, "failed to dial")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	return ariadnepb.NewRouteServiceClient(conn)
@@ -59,24 +57,15 @@ func TestIntegration_HappyPath(t *testing.T) {
 		&ariadnepb.ResolveCollisionsRequest{RouteCompressed: testRoute(t)},
 		grpc.Header(&header),
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if resp.RouteCompressed == "" {
-		t.Error("route_compressed is empty")
-	}
-	if resp.LengthMeters <= 0 {
-		t.Error("length_meters should be > 0")
-	}
-	if resp.PointsCount <= 0 {
-		t.Error("points_count should be > 0")
-	}
+	assert.NotEmpty(t, resp.RouteCompressed)
+	assert.Greater(t, resp.LengthMeters, float64(0))
+	assert.Greater(t, resp.PointsCount, int32(0))
 
 	ids := header.Get("x-request-id")
-	if len(ids) == 0 || ids[0] == "" {
-		t.Error("expected x-request-id in response metadata")
-	}
+	require.NotEmpty(t, ids)
+	assert.NotEmpty(t, ids[0])
 }
 
 func TestIntegration_RealRoute(t *testing.T) {
@@ -91,19 +80,11 @@ func TestIntegration_RealRoute(t *testing.T) {
 	resp, err := client.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: strings.TrimSpace(string(routeData)),
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if resp.PointsCount >= 3016 {
-		t.Errorf("expected fewer points after cleanup, got %d", resp.PointsCount)
-	}
-	if resp.RemovedPointsCount == 0 {
-		t.Error("expected some points removed")
-	}
-	if resp.LengthMeters <= 0 {
-		t.Error("length_meters should be > 0")
-	}
+	assert.Less(t, resp.PointsCount, int32(3016))
+	assert.NotZero(t, resp.RemovedPointsCount)
+	assert.Greater(t, resp.LengthMeters, float64(0))
 }
 
 func TestIntegration_ReturnDebug(t *testing.T) {
@@ -114,20 +95,12 @@ func TestIntegration_ReturnDebug(t *testing.T) {
 		RouteCompressed: testRoute(t),
 		ReturnDebug:     true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if len(resp.Debug) == 0 {
-		t.Error("expected debug stats")
-	}
+	assert.NotEmpty(t, resp.Debug)
 	for _, s := range resp.Debug {
-		if s.Name == "" {
-			t.Error("stage name is empty")
-		}
-		if s.PointsBefore <= 0 {
-			t.Errorf("stage %s: points_before should be > 0", s.Name)
-		}
+		assert.NotEmpty(t, s.Name)
+		assert.Greater(t, s.PointsBefore, int32(0))
 	}
 }
 
@@ -155,16 +128,10 @@ func TestIntegration_Errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := client.ResolveCollisions(ctx, tt.req)
-			if err == nil {
-				t.Fatal("expected error")
-			}
+			require.Error(t, err)
 			st, ok := status.FromError(err)
-			if !ok {
-				t.Fatalf("expected gRPC status, got %v", err)
-			}
-			if st.Code() != tt.wantCode {
-				t.Errorf("want code %s, got %s: %s", tt.wantCode, st.Code(), st.Message())
-			}
+			require.True(t, ok)
+			assert.Equal(t, tt.wantCode, st.Code())
 		})
 	}
 }
@@ -178,14 +145,11 @@ func TestIntegration_RequestIDOnError(t *testing.T) {
 		&ariadnepb.ResolveCollisionsRequest{RouteCompressed: ""},
 		grpc.Header(&header),
 	)
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	require.Error(t, err)
 
 	ids := header.Get("x-request-id")
-	if len(ids) == 0 || ids[0] == "" {
-		t.Error("expected x-request-id in response metadata even on error")
-	}
+	require.NotEmpty(t, ids)
+	assert.NotEmpty(t, ids[0])
 }
 
 func TestIntegration_MaxRecvMsgSize(t *testing.T) {
@@ -195,9 +159,7 @@ func TestIntegration_MaxRecvMsgSize(t *testing.T) {
 	srv := NewServer(h, logger, 100, false) // 100 bytes limit
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
+	require.NoError(t, err, "failed to listen")
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 
@@ -205,9 +167,7 @@ func TestIntegration_MaxRecvMsgSize(t *testing.T) {
 		lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if err != nil {
-		t.Fatalf("failed to dial: %v", err)
-	}
+	require.NoError(t, err, "failed to dial")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	client := ariadnepb.NewRouteServiceClient(conn)
@@ -222,24 +182,16 @@ func TestIntegration_MaxRecvMsgSize(t *testing.T) {
 		}
 	}
 	encoded, err := codec.Encode(points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	_, err = client.ResolveCollisions(context.Background(), &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: encoded,
 	})
-	if err == nil {
-		t.Fatal("expected error for message exceeding size limit")
-	}
+	require.Error(t, err)
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status, got %v", err)
-	}
-	if st.Code() != codes.ResourceExhausted {
-		t.Errorf("want code ResourceExhausted, got %s: %s", st.Code(), st.Message())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
 }
 
 func TestIntegration_RecoverInterceptor(t *testing.T) {
@@ -257,9 +209,7 @@ func TestIntegration_RecoverInterceptor(t *testing.T) {
 	ariadnepb.RegisterRouteServiceServer(srv, &panicHandler{})
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
+	require.NoError(t, err, "failed to listen")
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 
@@ -267,9 +217,7 @@ func TestIntegration_RecoverInterceptor(t *testing.T) {
 		lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if err != nil {
-		t.Fatalf("failed to dial: %v", err)
-	}
+	require.NoError(t, err, "failed to dial")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	client := ariadnepb.NewRouteServiceClient(conn)
@@ -277,17 +225,11 @@ func TestIntegration_RecoverInterceptor(t *testing.T) {
 	_, err = client.ResolveCollisions(context.Background(), &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: "test",
 	})
-	if err == nil {
-		t.Fatal("expected error after panic")
-	}
+	require.Error(t, err)
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status, got %v", err)
-	}
-	if st.Code() != codes.Internal {
-		t.Errorf("want code Internal, got %s", st.Code())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.Internal, st.Code())
 }
 
 func TestIntegration_HealthCheck(t *testing.T) {
@@ -297,9 +239,7 @@ func TestIntegration_HealthCheck(t *testing.T) {
 	srv := NewServer(h, logger, 10<<20, false)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
+	require.NoError(t, err, "failed to listen")
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 
@@ -307,9 +247,7 @@ func TestIntegration_HealthCheck(t *testing.T) {
 		lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	if err != nil {
-		t.Fatalf("failed to dial: %v", err)
-	}
+	require.NoError(t, err, "failed to dial")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	healthClient := healthpb.NewHealthClient(conn)
@@ -317,21 +255,13 @@ func TestIntegration_HealthCheck(t *testing.T) {
 	resp, err := healthClient.Check(context.Background(), &healthpb.HealthCheckRequest{
 		Service: "ariadne.v1.RouteService",
 	})
-	if err != nil {
-		t.Fatalf("health check failed: %v", err)
-	}
-	if resp.Status != healthpb.HealthCheckResponse_SERVING {
-		t.Errorf("want SERVING, got %s", resp.Status)
-	}
+	require.NoError(t, err, "health check failed")
+	assert.Equal(t, healthpb.HealthCheckResponse_SERVING, resp.Status)
 
 	// Пустой service = общий статус сервера
 	resp, err = healthClient.Check(context.Background(), &healthpb.HealthCheckRequest{})
-	if err != nil {
-		t.Fatalf("health check (empty service) failed: %v", err)
-	}
-	if resp.Status != healthpb.HealthCheckResponse_SERVING {
-		t.Errorf("want SERVING for empty service, got %s", resp.Status)
-	}
+	require.NoError(t, err, "health check (empty service) failed")
+	assert.Equal(t, healthpb.HealthCheckResponse_SERVING, resp.Status)
 }
 
 type panicHandler struct {

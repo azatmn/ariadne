@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"ariadne/internal/geo"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFilterBySpeedNormal(t *testing.T) {
@@ -19,13 +22,9 @@ func TestFilterBySpeedNormal(t *testing.T) {
 
 	f := FilterBySpeed{MaxKmh: 150}
 	result, _, err := f.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 3 {
-		t.Errorf("expected 3 points (all normal speed), got %d", len(result))
-	}
+	assert.Len(t, result, 3, "expected 3 points (all normal speed)")
 }
 
 func TestFilterBySpeedTeleport(t *testing.T) {
@@ -39,13 +38,9 @@ func TestFilterBySpeedTeleport(t *testing.T) {
 
 	f := FilterBySpeed{MaxKmh: 150}
 	result, _, err := f.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 2 {
-		t.Errorf("expected 2 points (teleport removed), got %d", len(result))
-	}
+	assert.Len(t, result, 2, "expected 2 points (teleport removed)")
 }
 
 func TestFilterBySpeedSameTime(t *testing.T) {
@@ -58,31 +53,19 @@ func TestFilterBySpeedSameTime(t *testing.T) {
 
 	f := FilterBySpeed{MaxKmh: 150}
 	result, _, err := f.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 1 {
-		t.Errorf("expected 1 point (dt=0 skipped), got %d", len(result))
-	}
+	assert.Len(t, result, 1, "expected 1 point (dt=0 skipped)")
 }
 
 func TestFilterBySpeedEmpty(t *testing.T) {
 	f := FilterBySpeed{MaxKmh: 150}
 
 	result, _, err := f.Apply(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 0 {
-		t.Errorf("expected 0 points, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 0, "expected 0 points")
 
 	result, _, err = f.Apply(context.Background(), []geo.Point{{Lon: 37.0, Lat: 55.0}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 1 {
-		t.Errorf("expected 1 point, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 1, "expected 1 point")
 }

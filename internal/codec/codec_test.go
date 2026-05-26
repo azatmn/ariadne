@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/base64"
-	"errors"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"ariadne/internal/geo"
 )
@@ -20,45 +21,29 @@ func TestDecodeEncode(t *testing.T) {
 	}
 
 	encoded, err := Encode(original)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
+	require.NoError(t, err, "Encode")
 
 	decoded, err := Decode(encoded, 100<<20)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
+	require.NoError(t, err, "Decode")
 
-	if len(decoded) != len(original) {
-		t.Fatalf("expected %d points, got %d", len(original), len(decoded))
-	}
+	require.Len(t, decoded, len(original))
 
 	for i := range original {
-		if !original[i].Time.Equal(decoded[i].Time) {
-			t.Errorf("point %d: time %v != %v", i, original[i].Time, decoded[i].Time)
-		}
-		if original[i].Lon != decoded[i].Lon {
-			t.Errorf("point %d: lon %f != %f", i, original[i].Lon, decoded[i].Lon)
-		}
-		if original[i].Lat != decoded[i].Lat {
-			t.Errorf("point %d: lat %f != %f", i, original[i].Lat, decoded[i].Lat)
-		}
+		assert.True(t, original[i].Time.Equal(decoded[i].Time), "point %d: time %v != %v", i, original[i].Time, decoded[i].Time)
+		assert.Equal(t, original[i].Lon, decoded[i].Lon, "point %d: lon", i)
+		assert.Equal(t, original[i].Lat, decoded[i].Lat, "point %d: lat", i)
 	}
 }
 
 func TestDecodeInvalidBase64(t *testing.T) {
 	_, err := Decode("not-valid-base64!!!", 100<<20)
-	if err == nil {
-		t.Fatal("expected error for invalid base64")
-	}
+	require.Error(t, err, "expected error for invalid base64")
 }
 
 func TestDecodeInvalidZlib(t *testing.T) {
 	// валидный base64, но внутри мусор — не zlib
 	_, err := Decode("aGVsbG8gd29ybGQ=", 100<<20)
-	if err == nil {
-		t.Fatal("expected error for invalid zlib")
-	}
+	require.Error(t, err, "expected error for invalid zlib")
 }
 
 func TestDecodeDecompressedTooLarge(t *testing.T) {
@@ -67,17 +52,10 @@ func TestDecodeDecompressedTooLarge(t *testing.T) {
 		{Time: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC), Lon: 37.1, Lat: 55.1},
 	}
 	encoded, err := Encode(points)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
+	require.NoError(t, err, "Encode")
 
 	_, err = Decode(encoded, 10)
-	if err == nil {
-		t.Fatal("expected error for decompressed data too large")
-	}
-	if !errors.Is(err, ErrDecompressedTooLarge) {
-		t.Errorf("expected ErrDecompressedTooLarge, got: %v", err)
-	}
+	require.ErrorIs(t, err, ErrDecompressedTooLarge)
 }
 
 func FuzzDecode(f *testing.F) {
@@ -103,12 +81,8 @@ func TestDecodeCoordinatesOutOfRange(t *testing.T) {
 	encoded := encodeRawJSON(t, raw)
 
 	_, err := Decode(encoded, 100<<20)
-	if err == nil {
-		t.Fatal("expected error for coordinates out of range")
-	}
-	if !strings.Contains(err.Error(), "out of range") {
-		t.Errorf("expected 'out of range' error, got: %v", err)
-	}
+	require.Error(t, err, "expected error for coordinates out of range")
+	assert.Contains(t, err.Error(), "out of range")
 }
 
 func TestDecodeLatitudeOutOfRange(t *testing.T) {
@@ -116,39 +90,44 @@ func TestDecodeLatitudeOutOfRange(t *testing.T) {
 	encoded := encodeRawJSON(t, raw)
 
 	_, err := Decode(encoded, 100<<20)
-	if err == nil {
-		t.Fatal("expected error for latitude out of range")
-	}
+	require.Error(t, err, "expected error for latitude out of range")
 }
 
 func encodeRawJSON(t *testing.T, jsonStr string) string {
 	t.Helper()
 	var buf bytes.Buffer
 	zw, err := zlib.NewWriterLevel(&buf, zlib.BestCompression)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := zw.Write([]byte(jsonStr)); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	_, err = zw.Write([]byte(jsonStr))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func TestDecodeInvalidJSONInsideZlib(t *testing.T) {
+	raw := `{not json at all!!!}`
+	encoded := encodeRawJSON(t, raw)
+
+	_, err := Decode(encoded, 100<<20)
+	require.Error(t, err, "expected error for invalid JSON inside zlib")
+	assert.Contains(t, err.Error(), "json unmarshal")
+}
+
+func TestDecodeInvalidTimeFormat(t *testing.T) {
+	raw := `[{"t":"2026-13-45","pos":{"x":37,"y":55}},{"t":"2026-01-01T00:00:01Z","pos":{"x":37.1,"y":55.1}}]`
+	encoded := encodeRawJSON(t, raw)
+
+	_, err := Decode(encoded, 100<<20)
+	require.Error(t, err, "expected error for invalid time format")
+	assert.Contains(t, err.Error(), "parse time")
 }
 
 func TestEncodeEmpty(t *testing.T) {
 	encoded, err := Encode([]geo.Point{})
-	if err != nil {
-		t.Fatalf("Encode empty: %v", err)
-	}
+	require.NoError(t, err, "Encode empty")
 
 	decoded, err := Decode(encoded, 100<<20)
-	if err != nil {
-		t.Fatalf("Decode empty: %v", err)
-	}
+	require.NoError(t, err, "Decode empty")
 
-	if len(decoded) != 0 {
-		t.Errorf("expected 0 points, got %d", len(decoded))
-	}
+	assert.Len(t, decoded, 0)
 }

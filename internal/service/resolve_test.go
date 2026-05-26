@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"ariadne/internal/config"
 	"ariadne/internal/geo"
@@ -40,22 +42,12 @@ func TestResolveHappyPath(t *testing.T) {
 	points := testPoints(10)
 
 	result, err := svc.Resolve(context.Background(), points)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	require.NoError(t, err, "Resolve")
 
-	if len(result.Points) < 2 {
-		t.Errorf("expected at least 2 points, got %d", len(result.Points))
-	}
-	if result.LengthMeters <= 0 {
-		t.Error("LengthMeters should be > 0")
-	}
-	if result.BeforeLenMeters <= 0 {
-		t.Error("BeforeLenMeters should be > 0")
-	}
-	if result.BeforeCount != 10 {
-		t.Errorf("BeforeCount: got %d, want 10", result.BeforeCount)
-	}
+	assert.GreaterOrEqual(t, len(result.Points), 2, "expected at least 2 points")
+	assert.Greater(t, result.LengthMeters, 0.0, "LengthMeters should be > 0")
+	assert.Greater(t, result.BeforeLenMeters, 0.0, "BeforeLenMeters should be > 0")
+	assert.Equal(t, 10, result.BeforeCount, "BeforeCount")
 }
 
 func TestResolveTooManyPoints(t *testing.T) {
@@ -64,9 +56,7 @@ func TestResolveTooManyPoints(t *testing.T) {
 	svc := New(cfg)
 
 	_, err := svc.Resolve(context.Background(), testPoints(10))
-	if !errors.Is(err, ErrTooManyPoints) {
-		t.Errorf("expected ErrTooManyPoints, got %v", err)
-	}
+	require.ErrorIs(t, err, ErrTooManyPoints)
 }
 
 func TestResolveTooFewPointsAfterPipeline(t *testing.T) {
@@ -76,9 +66,7 @@ func TestResolveTooFewPointsAfterPipeline(t *testing.T) {
 
 	points := testPoints(4)
 	_, err := svc.Resolve(context.Background(), points)
-	if !errors.Is(err, ErrTooFewPoints) {
-		t.Errorf("expected ErrTooFewPoints, got %v", err)
-	}
+	require.ErrorIs(t, err, ErrTooFewPoints)
 }
 
 func TestResolveExactlyMaxPoints(t *testing.T) {
@@ -87,27 +75,17 @@ func TestResolveExactlyMaxPoints(t *testing.T) {
 	svc := New(cfg)
 
 	result, err := svc.Resolve(context.Background(), testPoints(10))
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(result.Points) < 2 {
-		t.Errorf("expected at least 2 points, got %d", len(result.Points))
-	}
+	require.NoError(t, err, "Resolve")
+	assert.GreaterOrEqual(t, len(result.Points), 2, "expected at least 2 points")
 }
 
 func TestResolveTwoPoints(t *testing.T) {
 	svc := New(testConfig())
 
 	result, err := svc.Resolve(context.Background(), testPoints(2))
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(result.Points) != 2 {
-		t.Errorf("expected 2 points, got %d", len(result.Points))
-	}
-	if result.BeforeCount != 2 {
-		t.Errorf("BeforeCount: got %d, want 2", result.BeforeCount)
-	}
+	require.NoError(t, err, "Resolve")
+	assert.Len(t, result.Points, 2)
+	assert.Equal(t, 2, result.BeforeCount, "BeforeCount")
 }
 
 func TestResolveBuildParams(t *testing.T) {
@@ -118,13 +96,7 @@ func TestResolveBuildParams(t *testing.T) {
 	svc := New(cfg)
 
 	params := svc.buildParams()
-	if params.MaxSpeedKmh != 200 {
-		t.Errorf("MaxSpeedKmh: got %f, want 200", params.MaxSpeedKmh)
-	}
-	if params.DedupDistanceMeters != 5.0 {
-		t.Errorf("DedupDistanceMeters: got %f, want 5.0", params.DedupDistanceMeters)
-	}
-	if params.IntersectMaxIter != 500 {
-		t.Errorf("IntersectMaxIter: got %d, want 500", params.IntersectMaxIter)
-	}
+	assert.Equal(t, 200.0, params.MaxSpeedKmh, "MaxSpeedKmh")
+	assert.Equal(t, 5.0, params.DedupDistanceMeters, "DedupDistanceMeters")
+	assert.Equal(t, 500, params.IntersectMaxIter, "IntersectMaxIter")
 }

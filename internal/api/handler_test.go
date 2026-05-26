@@ -14,6 +14,9 @@ import (
 	"ariadne/internal/config"
 	"ariadne/internal/geo"
 	"ariadne/internal/service"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func testLogger() *slog.Logger {
@@ -58,9 +61,7 @@ func testRoute(t *testing.T) string {
 		{Time: t0.Add(30 * time.Second), Lon: 37.617600, Lat: 55.756100},
 	}
 	encoded, err := codec.Encode(points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return encoded
 }
 
@@ -75,9 +76,7 @@ func testRouteWithLoop(t *testing.T) string {
 		{Time: t0.Add(4 * time.Second), Lon: 37.617000, Lat: 55.756300},
 	}
 	encoded, err := codec.Encode(points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return encoded
 }
 
@@ -91,24 +90,15 @@ func TestHandlerHappyPath(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "response body: %s", w.Body.String())
 
 	var resp ResolveResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err, "failed to decode response")
 
-	if resp.RouteCompressed == "" {
-		t.Error("routeCompressed is empty")
-	}
-	if resp.LengthMeters <= 0 {
-		t.Error("lengthMeters should be > 0")
-	}
-	if resp.PointsCount <= 0 {
-		t.Error("pointsCount should be > 0")
-	}
+	assert.NotEmpty(t, resp.RouteCompressed, "routeCompressed is empty")
+	assert.Greater(t, resp.LengthMeters, 0.0, "lengthMeters should be > 0")
+	assert.Greater(t, resp.PointsCount, 0, "pointsCount should be > 0")
 }
 
 func TestHandlerInvalidJSON(t *testing.T) {
@@ -119,17 +109,12 @@ func TestHandlerInvalidJSON(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	var payload ErrorPayload
-	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if payload.Error.Code != CodeInvalidRequest {
-		t.Errorf("want code %s, got %s", CodeInvalidRequest, payload.Error.Code)
-	}
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error response")
+	assert.Equal(t, CodeInvalidRequest, payload.Error.Code)
 }
 
 func TestHandlerEmptyRoute(t *testing.T) {
@@ -141,9 +126,7 @@ func TestHandlerEmptyRoute(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandlerInvalidRoute(t *testing.T) {
@@ -155,17 +138,12 @@ func TestHandlerInvalidRoute(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	var payload ErrorPayload
-	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if payload.Error.Code != CodeInvalidRouteFormat {
-		t.Errorf("want code %s, got %s", CodeInvalidRouteFormat, payload.Error.Code)
-	}
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error response")
+	assert.Equal(t, CodeInvalidRouteFormat, payload.Error.Code)
 }
 
 func TestHandlerTooManyPoints(t *testing.T) {
@@ -179,17 +157,12 @@ func TestHandlerTooManyPoints(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("want 413, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 
 	var payload ErrorPayload
-	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if payload.Error.Code != CodeRouteTooLarge {
-		t.Errorf("want code %s, got %s", CodeRouteTooLarge, payload.Error.Code)
-	}
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error response")
+	assert.Equal(t, CodeRouteTooLarge, payload.Error.Code)
 }
 
 func TestHandlerWarningsInResponse(t *testing.T) {
@@ -204,18 +177,13 @@ func TestHandlerWarningsInResponse(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "response body: %s", w.Body.String())
 
 	var resp ResolveResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err, "failed to decode response")
 
-	if len(resp.Warnings) == 0 {
-		t.Error("expected warnings in response (IntersectMaxIter=0), got none")
-	}
+	assert.NotEmpty(t, resp.Warnings, "expected warnings in response (IntersectMaxIter=0), got none")
 }
 
 func TestHandlerNoWarningsWhenClean(t *testing.T) {
@@ -228,18 +196,74 @@ func TestHandlerNoWarningsWhenClean(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "response body: %s", w.Body.String())
 
 	var resp ResolveResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err, "failed to decode response")
 
-	if len(resp.Warnings) != 0 {
-		t.Errorf("expected no warnings for clean route, got %v", resp.Warnings)
-	}
+	assert.Empty(t, resp.Warnings, "expected no warnings for clean route")
+}
+
+func TestHandlerTimeout(t *testing.T) {
+	cfg := testConfig()
+	cfg.ResolveTimeout = 1 * time.Nanosecond
+	handler := testHandlerWithConfig(cfg)
+
+	body := `{"routeCompressed":"` + testRoute(t) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	time.Sleep(1 * time.Millisecond)
+	handler(w, r)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code, "response body: %s", w.Body.String())
+
+	var payload ErrorPayload
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error response")
+	assert.Equal(t, CodeInternal, payload.Error.Code)
+	assert.Equal(t, "processing timeout", payload.Error.Message)
+}
+
+func TestHandlerTooFewPointsAfterPipeline(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxSpeedKmh = 0.001
+	handler := testHandlerWithConfig(cfg)
+
+	body := `{"routeCompressed":"` + testRoute(t) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler(w, r)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, "response body: %s", w.Body.String())
+
+	var payload ErrorPayload
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error response")
+	assert.Equal(t, CodeUnprocessableRoute, payload.Error.Code)
+}
+
+func TestHandlerMaxBytesError(t *testing.T) {
+	logger := slog.Default()
+	cfg := testConfig()
+	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	handler := LimitBody(50)(ErrorMiddleware(logger)(h.HandleResolve))
+
+	bigBody := `{"routeCompressed":"` + strings.Repeat("x", 100) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bigBody))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, "response body: %s", w.Body.String())
+
+	var payload ErrorPayload
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error")
+	assert.Equal(t, CodeInvalidRequest, payload.Error.Code)
+	assert.Equal(t, "request body too large", payload.Error.Message)
 }
 
 func TestMiddlewareUnexpectedError(t *testing.T) {
@@ -254,15 +278,10 @@ func TestMiddlewareUnexpectedError(t *testing.T) {
 
 	handler(w, r)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("want 500, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 
 	var payload ErrorPayload
-	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if payload.Error.Code != CodeInternal {
-		t.Errorf("want code %s, got %s", CodeInternal, payload.Error.Code)
-	}
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err, "failed to decode error response")
+	assert.Equal(t, CodeInternal, payload.Error.Code)
 }

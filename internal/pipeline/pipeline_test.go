@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"ariadne/internal/geo"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunFullPipeline(t *testing.T) {
@@ -35,13 +38,10 @@ func TestRunFullPipeline(t *testing.T) {
 	pl := New(p)
 
 	result, _, _, err := pl.Run(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) >= len(points) {
-		t.Errorf("expected fewer points after pipeline, got %d (was %d)", len(result), len(points))
-	}
+	assert.Less(t, len(result), len(points),
+		"expected fewer points after pipeline, got %d (was %d)", len(result), len(points))
 	t.Logf("before: %d points, after: %d points", len(points), len(result))
 }
 
@@ -70,13 +70,9 @@ func TestRunCollectsWarnings(t *testing.T) {
 	pl := New(p)
 
 	_, warnings, _, err := pl.Run(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(warnings) == 0 {
-		t.Error("expected warnings from intersections (MaxIter=0), got none")
-	}
+	assert.NotEmpty(t, warnings, "expected warnings from intersections (MaxIter=0), got none")
 }
 
 func TestRunEarlyExitFewPoints(t *testing.T) {
@@ -101,13 +97,9 @@ func TestRunEarlyExitFewPoints(t *testing.T) {
 	pl := New(p)
 
 	result, _, _, err := pl.Run(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) >= 2 {
-		t.Errorf("expected < 2 points after speed filter, got %d", len(result))
-	}
+	assert.Less(t, len(result), 2, "expected < 2 points after speed filter")
 }
 
 func TestRunEmpty(t *testing.T) {
@@ -123,11 +115,7 @@ func TestRunEmpty(t *testing.T) {
 	pl := New(p)
 
 	result, _, _, err := pl.Run(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 0 {
-		t.Errorf("expected 0 points for nil input, got %d", len(result))
-	}
+	assert.Len(t, result, 0, "expected 0 points for nil input")
 }

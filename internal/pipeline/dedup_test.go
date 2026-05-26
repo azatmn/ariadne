@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"ariadne/internal/geo"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDeduplicateRemovesDuplicates(t *testing.T) {
@@ -20,13 +23,9 @@ func TestDeduplicateRemovesDuplicates(t *testing.T) {
 
 	d := Deduplicate{DedupDistanceMeters: 2.0, MaxTimeGap: 60 * time.Second}
 	result, _, err := d.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 2 {
-		t.Errorf("expected 2 points (2 dupes removed), got %d", len(result))
-	}
+	assert.Len(t, result, 2, "expected 2 points (2 dupes removed)")
 }
 
 func TestDeduplicateKeepsTimeGap(t *testing.T) {
@@ -39,23 +38,15 @@ func TestDeduplicateKeepsTimeGap(t *testing.T) {
 
 	d := Deduplicate{DedupDistanceMeters: 2.0, MaxTimeGap: 60 * time.Second}
 	result, _, err := d.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 2 {
-		t.Errorf("expected 2 points (same place but time gap too big), got %d", len(result))
-	}
+	assert.Len(t, result, 2, "expected 2 points (same place but time gap too big)")
 }
 
 func TestDeduplicateEmpty(t *testing.T) {
 	d := Deduplicate{DedupDistanceMeters: 2.0, MaxTimeGap: 60 * time.Second}
 
 	result, _, err := d.Apply(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 0 {
-		t.Errorf("expected 0 points, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 0, "expected 0 points")
 }

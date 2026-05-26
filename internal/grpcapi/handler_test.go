@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -39,9 +41,7 @@ func testRoute(t *testing.T) string {
 		{Time: t0.Add(30 * time.Second), Lon: 37.617600, Lat: 55.756100},
 	}
 	encoded, err := codec.Encode(points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return encoded
 }
 
@@ -58,22 +58,12 @@ func TestResolveCollisions_HappyPath(t *testing.T) {
 	resp, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: testRoute(t),
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("response is nil")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, resp)
 
-	if resp.RouteCompressed == "" {
-		t.Error("route_compressed is empty")
-	}
-	if resp.LengthMeters <= 0 {
-		t.Error("length_meters should be > 0")
-	}
-	if resp.PointsCount <= 0 {
-		t.Error("points_count should be > 0")
-	}
+	assert.NotEmpty(t, resp.RouteCompressed)
+	assert.Greater(t, resp.LengthMeters, float64(0))
+	assert.Greater(t, resp.PointsCount, int32(0))
 }
 
 func TestResolveCollisions_EmptyRoute(t *testing.T) {
@@ -83,17 +73,11 @@ func TestResolveCollisions_EmptyRoute(t *testing.T) {
 	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: "",
 	})
-	if err == nil {
-		t.Fatal("expected error for empty route")
-	}
+	require.Error(t, err)
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got %v", err)
-	}
-	if st.Code() != codes.InvalidArgument {
-		t.Errorf("want code InvalidArgument, got %s", st.Code())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
 func TestResolveCollisions_InvalidBase64(t *testing.T) {
@@ -103,17 +87,11 @@ func TestResolveCollisions_InvalidBase64(t *testing.T) {
 	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: "not-valid-base64!!!",
 	})
-	if err == nil {
-		t.Fatal("expected error for invalid data")
-	}
+	require.Error(t, err)
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got %v", err)
-	}
-	if st.Code() != codes.InvalidArgument {
-		t.Errorf("want code InvalidArgument, got %s", st.Code())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
 func TestResolveCollisions_TooManyPoints(t *testing.T) {
@@ -125,17 +103,11 @@ func TestResolveCollisions_TooManyPoints(t *testing.T) {
 	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: testRoute(t),
 	})
-	if err == nil {
-		t.Fatal("expected error for too many points")
-	}
+	require.Error(t, err)
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got %v", err)
-	}
-	if st.Code() != codes.ResourceExhausted {
-		t.Errorf("want code ResourceExhausted, got %s", st.Code())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
 }
 
 func TestResolveCollisions_DecompressedTooLarge(t *testing.T) {
@@ -147,17 +119,11 @@ func TestResolveCollisions_DecompressedTooLarge(t *testing.T) {
 	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
 		RouteCompressed: testRoute(t),
 	})
-	if err == nil {
-		t.Fatal("expected error for decompressed too large")
-	}
+	require.Error(t, err)
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got %v", err)
-	}
-	if st.Code() != codes.ResourceExhausted {
-		t.Errorf("want code ResourceExhausted, got %s", st.Code())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
 }
 
 func TestResolveCollisions_ReturnDebug(t *testing.T) {
@@ -168,20 +134,12 @@ func TestResolveCollisions_ReturnDebug(t *testing.T) {
 		RouteCompressed: testRoute(t),
 		ReturnDebug:     true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("response is nil")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, resp)
 
-	if len(resp.Debug) == 0 {
-		t.Error("expected debug stats when returnDebug=true")
-	}
+	assert.NotEmpty(t, resp.Debug)
 	for _, s := range resp.Debug {
-		if s.Name == "" {
-			t.Error("stage name should not be empty")
-		}
+		assert.NotEmpty(t, s.Name)
 	}
 }
 
@@ -193,16 +151,10 @@ func TestResolveCollisions_NoDebugByDefault(t *testing.T) {
 		RouteCompressed: testRoute(t),
 		ReturnDebug:     false,
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("response is nil")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, resp)
 
-	if len(resp.Debug) != 0 {
-		t.Errorf("expected no debug stats by default, got %d", len(resp.Debug))
-	}
+	assert.Empty(t, resp.Debug)
 }
 
 func TestResolveCollisions_Timeout(t *testing.T) {
@@ -221,10 +173,6 @@ func TestResolveCollisions_Timeout(t *testing.T) {
 	}
 
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got %v", err)
-	}
-	if st.Code() != codes.DeadlineExceeded {
-		t.Errorf("want code DeadlineExceeded, got %s", st.Code())
-	}
+	require.True(t, ok)
+	assert.Equal(t, codes.DeadlineExceeded, st.Code())
 }

@@ -3,13 +3,14 @@ package config
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadDefaults(t *testing.T) {
 	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	require.NoError(t, err, "Load")
 
 	checks := []struct {
 		name string
@@ -34,9 +35,7 @@ func TestLoadDefaults(t *testing.T) {
 	}
 
 	for _, c := range checks {
-		if c.got != c.want {
-			t.Errorf("%s: got %v, want %v", c.name, c.got, c.want)
-		}
+		assert.Equal(t, c.want, c.got, c.name)
 	}
 }
 
@@ -51,34 +50,16 @@ func TestLoadCustomEnv(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
 
 	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	require.NoError(t, err, "Load")
 
-	if cfg.Port != "9090" {
-		t.Errorf("Port: got %s, want 9090", cfg.Port)
-	}
-	if cfg.ReadTimeout != 5*time.Second {
-		t.Errorf("ReadTimeout: got %v, want 5s", cfg.ReadTimeout)
-	}
-	if cfg.MaxBodyBytes != 5<<20 {
-		t.Errorf("MaxBodyBytes: got %d, want %d", cfg.MaxBodyBytes, 5<<20)
-	}
-	if cfg.MaxDecompressedBytes != 50<<20 {
-		t.Errorf("MaxDecompressedBytes: got %d, want %d", cfg.MaxDecompressedBytes, 50<<20)
-	}
-	if cfg.MaxPoints != 10_000 {
-		t.Errorf("MaxPoints: got %d, want 10000", cfg.MaxPoints)
-	}
-	if cfg.MaxSpeedKmh != 200.0 {
-		t.Errorf("MaxSpeedKmh: got %f, want 200", cfg.MaxSpeedKmh)
-	}
-	if cfg.DedupDistanceMeters != 5.0 {
-		t.Errorf("DedupDistanceMeters: got %f, want 5.0", cfg.DedupDistanceMeters)
-	}
-	if cfg.LogLevel != "debug" {
-		t.Errorf("LogLevel: got %s, want debug", cfg.LogLevel)
-	}
+	assert.Equal(t, "9090", cfg.Port, "Port")
+	assert.Equal(t, 5*time.Second, cfg.ReadTimeout, "ReadTimeout")
+	assert.Equal(t, int64(5<<20), cfg.MaxBodyBytes, "MaxBodyBytes")
+	assert.Equal(t, int64(50<<20), cfg.MaxDecompressedBytes, "MaxDecompressedBytes")
+	assert.Equal(t, 10_000, cfg.MaxPoints, "MaxPoints")
+	assert.Equal(t, 200.0, cfg.MaxSpeedKmh, "MaxSpeedKmh")
+	assert.Equal(t, 5.0, cfg.DedupDistanceMeters, "DedupDistanceMeters")
+	assert.Equal(t, "debug", cfg.LogLevel, "LogLevel")
 }
 
 func TestLoadInvalidEnvFallsBackToDefault(t *testing.T) {
@@ -88,20 +69,21 @@ func TestLoadInvalidEnvFallsBackToDefault(t *testing.T) {
 	t.Setenv("MAX_BODY_BYTES", "xyz")
 
 	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	require.NoError(t, err, "Load")
 
-	if cfg.MaxPoints != 50_000 {
-		t.Errorf("MaxPoints: got %d, want default 50000", cfg.MaxPoints)
-	}
-	if cfg.MaxSpeedKmh != 150.0 {
-		t.Errorf("MaxSpeedKmh: got %f, want default 150", cfg.MaxSpeedKmh)
-	}
-	if cfg.ReadTimeout != 10*time.Second {
-		t.Errorf("ReadTimeout: got %v, want default 10s", cfg.ReadTimeout)
-	}
-	if cfg.MaxBodyBytes != 10<<20 {
-		t.Errorf("MaxBodyBytes: got %d, want default %d", cfg.MaxBodyBytes, 10<<20)
-	}
+	assert.Equal(t, 50_000, cfg.MaxPoints, "MaxPoints")
+	assert.Equal(t, 150.0, cfg.MaxSpeedKmh, "MaxSpeedKmh")
+	assert.Equal(t, 10*time.Second, cfg.ReadTimeout, "ReadTimeout")
+	assert.Equal(t, int64(10<<20), cfg.MaxBodyBytes, "MaxBodyBytes")
+}
+
+func TestLoadInvalidBoolFallsBackToDefault(t *testing.T) {
+	t.Setenv("SWAGGER_ENABLED", "not-a-bool")
+	t.Setenv("GRPC_REFLECTION", "maybe")
+
+	cfg, err := Load()
+	require.NoError(t, err, "Load")
+
+	assert.Equal(t, false, cfg.SwaggerEnabled, "SwaggerEnabled")
+	assert.Equal(t, false, cfg.GRPCReflection, "GRPCReflection")
 }

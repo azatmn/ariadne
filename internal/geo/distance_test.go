@@ -1,8 +1,9 @@
 package geo
 
 import (
-	"math"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHaversineMoscowSPB(t *testing.T) {
@@ -12,18 +13,14 @@ func TestHaversineMoscowSPB(t *testing.T) {
 	got := Haversine(moscow, spb)
 	want := 634_000.0 // ~634 км
 
-	if math.Abs(got-want) > 5000 {
-		t.Errorf("Moscow→SPB: got %.0f m, want ~%.0f m", got, want)
-	}
+	assert.InDelta(t, want, got, 5000, "Moscow→SPB distance")
 	t.Logf("Moscow→SPB = %.0f m", got)
 }
 
 func TestHaversineSamePoint(t *testing.T) {
 	p := Point{Lon: 38.0, Lat: 54.0}
 	got := Haversine(p, p)
-	if got != 0 {
-		t.Errorf("same point: got %f, want 0", got)
-	}
+	assert.Equal(t, 0.0, got, "same point distance should be 0")
 }
 
 func TestTotalLength(t *testing.T) {
@@ -36,17 +33,11 @@ func TestTotalLength(t *testing.T) {
 	total := TotalLength(points)
 	direct := Haversine(points[0], points[2])
 
-	if total < direct {
-		t.Errorf("total (%f) should be >= direct (%f)", total, direct)
-	}
+	assert.GreaterOrEqual(t, total, direct, "total should be >= direct")
 	t.Logf("total = %.0f m, direct = %.0f m", total, direct)
 }
 
 func TestTotalLengthShort(t *testing.T) {
-	if TotalLength(nil) != 0 {
-		t.Error("nil slice should return 0")
-	}
-	if TotalLength([]Point{{Lon: 37.0, Lat: 55.0}}) != 0 {
-		t.Error("single point should return 0")
-	}
+	assert.Equal(t, 0.0, TotalLength(nil), "nil slice should return 0")
+	assert.Equal(t, 0.0, TotalLength([]Point{{Lon: 37.0, Lat: 55.0}}), "single point should return 0")
 }

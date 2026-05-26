@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"ariadne/internal/geo"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSortByTimeOrders(t *testing.T) {
@@ -20,14 +23,11 @@ func TestSortByTimeOrders(t *testing.T) {
 
 	s := SortByTime{}
 	result, _, err := s.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	for i := 1; i < len(result); i++ {
-		if result[i].Time.Before(result[i-1].Time) {
-			t.Errorf("point %d (%v) is before point %d (%v)", i, result[i].Time, i-1, result[i-1].Time)
-		}
+		assert.False(t, result[i].Time.Before(result[i-1].Time),
+			"point %d (%v) is before point %d (%v)", i, result[i].Time, i-1, result[i-1].Time)
 	}
 }
 
@@ -42,23 +42,15 @@ func TestSortByTimeAlreadySorted(t *testing.T) {
 
 	s := SortByTime{}
 	result, _, err := s.Apply(context.Background(), points)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(result) != 3 {
-		t.Errorf("expected 3 points, got %d", len(result))
-	}
+	assert.Len(t, result, 3, "expected 3 points")
 }
 
 func TestSortByTimeEmpty(t *testing.T) {
 	s := SortByTime{}
 
 	result, _, err := s.Apply(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 0 {
-		t.Errorf("expected 0 points, got %d", len(result))
-	}
+	require.NoError(t, err)
+	assert.Len(t, result, 0, "expected 0 points")
 }
