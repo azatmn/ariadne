@@ -51,13 +51,15 @@ func main() {
 
 	// gRPC
 	grpcHandler := grpcapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	grpcSrv := grpcapi.NewServer(grpcHandler, logger, cfg.GRPCMaxRecvMsgSize)
+	grpcSrv := grpcapi.NewServer(grpcHandler, logger, cfg.GRPCMaxRecvMsgSize, cfg.GRPCReflection)
 
 	errCh := make(chan error, 2)
 
 	go func() {
 		logger.Info("http server starting", "addr", httpSrv.Addr)
-		errCh <- httpSrv.ListenAndServe()
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
 	}()
 
 	go func() {
@@ -68,7 +70,9 @@ func main() {
 			return
 		}
 		logger.Info("grpc server starting", "addr", addr)
-		errCh <- grpcSrv.Serve(lis)
+		if err := grpcSrv.Serve(lis); err != nil {
+			errCh <- err
+		}
 	}()
 
 	quit := make(chan os.Signal, 1)
@@ -76,23 +80,31 @@ func main() {
 
 	select {
 	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
-		}
+		logger.Error("server failed, shutting down", "error", err)
 	case sig := <-quit:
 		logger.Info("shutting down", "signal", sig.String())
-
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-		defer cancel()
-
-		grpcSrv.GracefulStop()
-
-		if err := httpSrv.Shutdown(ctx); err != nil {
-			logger.Error("http shutdown error", "error", err)
-			os.Exit(1)
-		}
-
-		logger.Info("servers stopped")
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+
+	grpcDone := make(chan struct{})
+	go func() {
+		grpcSrv.GracefulStop()
+		close(grpcDone)
+	}()
+
+	select {
+	case <-grpcDone:
+		logger.Info("grpc server stopped gracefully")
+	case <-ctx.Done():
+		logger.Warn("grpc graceful stop timed out, forcing")
+		grpcSrv.Stop()
+	}
+
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		logger.Error("http shutdown error", "error", err)
+	}
+
+	logger.Info("servers stopped")
 }

@@ -22,6 +22,6 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/server /server
 
 USER nonroot:nonroot
-EXPOSE 8080
+EXPOSE 8080 9090
 
 ENTRYPOINT ["/server"]

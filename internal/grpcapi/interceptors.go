@@ -3,6 +3,7 @@ package grpcapi
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"google.golang.org/grpc"
@@ -50,7 +51,7 @@ func RecoverInterceptor() grpc.UnaryServerInterceptor {
 		defer func() {
 			if rec := recover(); rec != nil {
 				log := logger.FromContext(ctx)
-				log.Error("panic recovered", "method", info.FullMethod, "panic", rec)
+				log.Error("panic recovered", "method", info.FullMethod, "panic", rec, "stack", string(debug.Stack()))
 				err = status.Error(codes.Internal, "internal error")
 			}
 		}()

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"ariadne/internal/geo"
@@ -61,10 +62,18 @@ func Decode(routeCompressed string, maxDecompressedBytes int64) ([]geo.Point, er
 		if err != nil {
 			return nil, fmt.Errorf("codec: parse time %q at index %d: %w", w.T, i, err)
 		}
+		lon, lat := w.Pos.X, w.Pos.Y
+		if math.IsNaN(lon) || math.IsNaN(lat) || math.IsInf(lon, 0) || math.IsInf(lat, 0) {
+			return nil, fmt.Errorf("codec: invalid coordinates at index %d", i)
+		}
+		if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+			return nil, fmt.Errorf("codec: coordinates out of range at index %d: lon=%f lat=%f", i, lon, lat)
+		}
+
 		points[i] = geo.Point{
 			Time: t,
-			Lon:  w.Pos.X,
-			Lat:  w.Pos.Y,
+			Lon:  lon,
+			Lat:  lat,
 		}
 	}
 

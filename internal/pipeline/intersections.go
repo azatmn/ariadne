@@ -20,6 +20,8 @@ func (r RemoveSelfIntersections) Apply(ctx context.Context, points []geo.Point) 
 		return points, nil, nil
 	}
 
+	points = slices.Clone(points)
+
 	for iter := 0; iter < r.IntersectMaxIter; iter++ {
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()

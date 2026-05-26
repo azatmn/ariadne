@@ -11,7 +11,7 @@ import (
 	ariadnepb "ariadne/internal/gen/ariadne"
 )
 
-func NewServer(h *Handler, logger *slog.Logger, maxRecvMsgSize int) *grpc.Server {
+func NewServer(h *Handler, logger *slog.Logger, maxRecvMsgSize int, enableReflection bool) *grpc.Server {
 	srv := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.ChainUnaryInterceptor(
@@ -26,7 +26,9 @@ func NewServer(h *Handler, logger *slog.Logger, maxRecvMsgSize int) *grpc.Server
 	healthpb.RegisterHealthServer(srv, healthSrv)
 	healthSrv.SetServingStatus("ariadne.v1.RouteService", healthpb.HealthCheckResponse_SERVING)
 
-	reflection.Register(srv)
+	if enableReflection {
+		reflection.Register(srv)
+	}
 
 	return srv
 }

@@ -28,7 +28,7 @@ func startTestServer(t *testing.T) ariadnepb.RouteServiceClient {
 	cfg := testConfig()
 	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	srv := NewServer(h, logger, 10<<20)
+	srv := NewServer(h, logger, 10<<20, false)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -192,7 +192,7 @@ func TestIntegration_MaxRecvMsgSize(t *testing.T) {
 	cfg := testConfig()
 	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	srv := NewServer(h, logger, 100) // 100 bytes limit
+	srv := NewServer(h, logger, 100, false) // 100 bytes limit
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -294,7 +294,7 @@ func TestIntegration_HealthCheck(t *testing.T) {
 	cfg := testConfig()
 	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	srv := NewServer(h, logger, 10<<20)
+	srv := NewServer(h, logger, 10<<20, false)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

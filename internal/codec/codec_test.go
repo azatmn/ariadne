@@ -1,7 +1,11 @@
 package codec
 
 import (
+	"bytes"
+	"compress/zlib"
+	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,8 +94,47 @@ func FuzzDecode(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		Decode(input, 1<<20)
+		_, _ = Decode(input, 1<<20)
 	})
+}
+
+func TestDecodeCoordinatesOutOfRange(t *testing.T) {
+	raw := `[{"t":"2026-01-01T00:00:00Z","pos":{"x":200,"y":55}},{"t":"2026-01-01T00:00:01Z","pos":{"x":37,"y":55}}]`
+	encoded := encodeRawJSON(t, raw)
+
+	_, err := Decode(encoded, 100<<20)
+	if err == nil {
+		t.Fatal("expected error for coordinates out of range")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("expected 'out of range' error, got: %v", err)
+	}
+}
+
+func TestDecodeLatitudeOutOfRange(t *testing.T) {
+	raw := `[{"t":"2026-01-01T00:00:00Z","pos":{"x":37,"y":-100}},{"t":"2026-01-01T00:00:01Z","pos":{"x":37,"y":55}}]`
+	encoded := encodeRawJSON(t, raw)
+
+	_, err := Decode(encoded, 100<<20)
+	if err == nil {
+		t.Fatal("expected error for latitude out of range")
+	}
+}
+
+func encodeRawJSON(t *testing.T, jsonStr string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	zw, err := zlib.NewWriterLevel(&buf, zlib.BestCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := zw.Write([]byte(jsonStr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
 func TestEncodeEmpty(t *testing.T) {

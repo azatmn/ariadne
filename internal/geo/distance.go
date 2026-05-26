@@ -14,7 +14,7 @@ func Haversine(a, b Point) float64 {
 		math.Cos(lat1)*math.Cos(lat2)*
 			math.Sin(dlon/2)*math.Sin(dlon/2)
 
-	return 2 * earthRadius * math.Asin(math.Sqrt(h))
+	return 2 * earthRadius * math.Atan2(math.Sqrt(h), math.Sqrt(1-h))
 }
 
 func TotalLength(points []Point) float64 {

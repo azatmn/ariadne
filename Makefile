@@ -1,4 +1,4 @@
-.PHONY: run test lint proto swagger
+.PHONY: run test lint proto swagger bench fuzz
 
 run:
 	go run ./cmd/server
@@ -16,3 +16,9 @@ proto:
 
 swagger:
 	swag init -g cmd/server/main.go -o swagger/ --outputTypes go,json
+
+bench:
+	go test -bench=. -benchmem ./internal/service/ 2>&1 | grep -E "^(Benchmark|ok)"
+
+fuzz:
+	go test -fuzz=FuzzDecode -fuzztime=30s ./internal/codec/

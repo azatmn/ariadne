@@ -31,6 +31,7 @@ type Config struct {
 	OSRMURL string
 
 	SwaggerEnabled bool
+	GRPCReflection bool
 
 	LogLevel string
 }
@@ -61,7 +62,8 @@ func Load() (*Config, error) {
 		// SimplifyMinMeters: envFloat("SIMPLIFY_MIN_METERS", 2.0), // post-MVP: Дугласа-Пекера
 
 		// Swagger
-		SwaggerEnabled: envBool("SWAGGER_ENABLED", true),
+		SwaggerEnabled: envBool("SWAGGER_ENABLED", false),
+		GRPCReflection: envBool("GRPC_REFLECTION", false),
 
 		// Logging
 		LogLevel: envStr("LOG_LEVEL", "info"),

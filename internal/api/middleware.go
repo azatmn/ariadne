@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"ariadne/internal/logger"
@@ -54,7 +55,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					logger.Error("panic recovered", "request_id", w.Header().Get("X-Request-ID"), "panic", rec)
+					logger.Error("panic recovered", "request_id", w.Header().Get("X-Request-ID"), "panic", rec, "stack", string(debug.Stack()))
 					WriteError(w, r, CodeInternal, "internal error")
 				}
 			}()
