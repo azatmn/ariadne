@@ -294,7 +294,7 @@ Pipeline запускается автоматически при пуше в Gi
 git push → .gitlab-ci.yml →
   1. test:   go vet + go test -race (на каждый пуш и MR)
   2. build:  docker build → push в GitLab Registry (только main)
-  3. deploy: ssh на сервер → docker pull → docker compose up -d (только main)
+  3. deploy: webhook (TODO — ждём URL и токен от команды)
 ```
 
 - Тесты бегут в кастомном образе `$CI_REGISTRY_IMAGE/ci:1.26` (Go + gcc для race detector)
