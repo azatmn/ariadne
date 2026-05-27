@@ -6,3 +6,5 @@ services:
       - "${PORT:-8080}:${PORT:-8080}"
       - "${GRPC_PORT:-9090}:${GRPC_PORT:-9090}"
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 1.0

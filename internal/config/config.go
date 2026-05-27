@@ -13,6 +13,7 @@ type Config struct {
 	GRPCMaxRecvMsgSize   int
 	ReadTimeout          time.Duration
 	WriteTimeout         time.Duration
+	IdleTimeout          time.Duration
 	ShutdownTimeout      time.Duration
 	MaxBodyBytes         int64
 	MaxDecompressedBytes int64
@@ -44,11 +45,12 @@ func Load() (*Config, error) {
 		GRPCMaxRecvMsgSize: envInt("GRPC_MAX_RECV_MSG_SIZE", 10<<20), // 10 MB
 		ReadTimeout:        envDuration("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout:       envDuration("WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:        envDuration("IDLE_TIMEOUT", 2*time.Minute),
 		ShutdownTimeout:    envDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
 
 		// Limits
-		MaxBodyBytes:         envInt64("MAX_BODY_BYTES", 10<<20),          // 10 MB
-		MaxDecompressedBytes: envInt64("MAX_DECOMPRESSED_BYTES", 100<<20), // 100 MB
+		MaxBodyBytes:         envInt64("MAX_BODY_BYTES", 10<<20),         // 10 MB
+		MaxDecompressedBytes: envInt64("MAX_DECOMPRESSED_BYTES", 20<<20), // 20 MB
 		MaxPoints:            envInt("MAX_POINTS", 50_000),
 		ResolveTimeout:       envDuration("RESOLVE_TIMEOUT", 25*time.Second),
 

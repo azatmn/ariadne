@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -55,6 +56,37 @@ func TestDecodeDecompressedTooLarge(t *testing.T) {
 	require.NoError(t, err, "Encode")
 
 	_, err = Decode(encoded, 10)
+	require.ErrorIs(t, err, ErrDecompressedTooLarge)
+}
+
+func TestDecodeZlibBomb(t *testing.T) {
+	// 50 000 одинаковых точек — zlib сжимает повторы очень хорошо.
+	// Сжатый размер ~нескольких КБ, а после распаковки ~4.5 MB JSON.
+	// Лимит ставим 1 MB — должен сработать ErrDecompressedTooLarge.
+	var points []wirePoint
+	for i := range 50_000 {
+		points = append(points, wirePoint{
+			T:   time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC).Format(time.RFC3339),
+			Pos: wirePos{X: 37.0, Y: 55.0},
+		})
+	}
+
+	jsonData, err := json.Marshal(points)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	w, err := zlib.NewWriterLevel(&buf, zlib.BestCompression)
+	require.NoError(t, err)
+	_, err = w.Write(jsonData)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	// Сжатый размер гораздо меньше распакованного
+	assert.Less(t, len(buf.Bytes()), len(jsonData)/10, "compression ratio should be > 10x")
+
+	_, err = Decode(encoded, 1<<20) // лимит 1 MB
 	require.ErrorIs(t, err, ErrDecompressedTooLarge)
 }
 

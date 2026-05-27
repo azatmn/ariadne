@@ -1,5 +1,7 @@
 # ariadne
 
+Stateless Go-микросервис для устранения коллизий GPS-маршрутов: принимает сжатый маршрут от backend, чистит дубликаты/пересечения/петли, возвращает исправленный маршрут и его длину в метрах.
+
 ## API
 
 ### POST /v1/routes/resolve-collisions
@@ -207,11 +209,12 @@ swagger/                 сгенерированная Swagger-спека (swag
 | `GRPC_MAX_RECV_MSG_SIZE` | `10485760` (10 МБ) | лимит размера входящего gRPC-сообщения |
 | `READ_TIMEOUT` | `10s` | таймаут чтения HTTP-запроса |
 | `WRITE_TIMEOUT` | `30s` | таймаут записи HTTP-ответа |
+| `IDLE_TIMEOUT` | `2m` | таймаут keep-alive соединений без активности |
 | `SHUTDOWN_TIMEOUT` | `15s` | таймаут graceful shutdown |
 | `RESOLVE_TIMEOUT` | `25s` | таймаут обработки маршрута |
 | **Limits** | | |
 | `MAX_BODY_BYTES` | `10485760` (10 МБ) | лимит размера HTTP body |
-| `MAX_DECOMPRESSED_BYTES` | `104857600` (100 МБ) | лимит после распаковки zlib (защита от zip bomb) |
+| `MAX_DECOMPRESSED_BYTES` | `20971520` (20 МБ) | лимит после распаковки zlib (защита от zip bomb) |
 | `MAX_POINTS` | `50000` | максимум точек в маршруте |
 | **Pipeline** | | |
 | `DEDUP_DISTANCE_METERS` | `2.0` | порог близости точек для дедупликации (метры) |
@@ -247,12 +250,12 @@ swagger/                 сгенерированная Swagger-спека (swag
 
 **REST:**
 1. **`MAX_BODY_BYTES`** (10 МБ) — middleware `LimitBody` через `http.MaxBytesReader`. Отсекает слишком большие HTTP-запросы до чтения в память.
-2. **`MAX_DECOMPRESSED_BYTES`** (100 МБ) — `io.LimitReader` вокруг zlib-распаковки в `codec.Decode`. Защита от zip bomb.
+2. **`MAX_DECOMPRESSED_BYTES`** (20 МБ) — `io.LimitReader` вокруг zlib-распаковки в `codec.Decode`. Защита от zip bomb.
 3. **`MAX_POINTS`** (50 000) — бизнес-лимит в `service.Resolve`. Ограничивает количество точек маршрута.
 
 **gRPC:**
 1. **`GRPC_MAX_RECV_MSG_SIZE`** (10 МБ) — `grpc.MaxRecvMsgSize`. Отсекает слишком большие protobuf-сообщения.
-2. **`MAX_DECOMPRESSED_BYTES`** (100 МБ) — аналогично REST.
+2. **`MAX_DECOMPRESSED_BYTES`** (20 МБ) — аналогично REST.
 3. **`MAX_POINTS`** (50 000) — аналогично REST.
 
 ## Запуск
@@ -307,3 +310,7 @@ git push → .gitlab-ci.yml →
 - Simplify — упрощение маршрута алгоритмом Дугласа-Пекера
 - FilterByAcceleration — фильтр по ускорению (ловит GPS-глюки с резким набором скорости, которые проходят через speed-фильтр)
 - Auth middleware — Bearer token из env
+
+## Автор
+
+**Azat Minyazov** — [Telegram](https://t.me/azatmn) — minyazovazat@gmail.com

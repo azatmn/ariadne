@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	_ "ariadne/swagger"
@@ -47,6 +48,7 @@ func main() {
 		Handler:      router,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
 	}
 
 	// gRPC
@@ -85,26 +87,36 @@ func main() {
 		logger.Info("shutting down", "signal", sig.String())
 	}
 
+	api.SetReady(false)
+
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	grpcDone := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func() {
-		grpcSrv.GracefulStop()
-		close(grpcDone)
+		defer wg.Done()
+		done := make(chan struct{})
+		go func() { grpcSrv.GracefulStop(); close(done) }()
+		select {
+		case <-done:
+			logger.Info("grpc server stopped gracefully")
+		case <-ctx.Done():
+			logger.Warn("grpc graceful stop timed out, forcing")
+			grpcSrv.Stop()
+		}
 	}()
 
-	select {
-	case <-grpcDone:
-		logger.Info("grpc server stopped gracefully")
-	case <-ctx.Done():
-		logger.Warn("grpc graceful stop timed out, forcing")
-		grpcSrv.Stop()
-	}
+	go func() {
+		defer wg.Done()
+		if err := httpSrv.Shutdown(ctx); err != nil {
+			logger.Error("http shutdown error", "error", err)
+		} else {
+			logger.Info("http server stopped gracefully")
+		}
+	}()
 
-	if err := httpSrv.Shutdown(ctx); err != nil {
-		logger.Error("http shutdown error", "error", err)
-	}
-
+	wg.Wait()
 	logger.Info("servers stopped")
 }

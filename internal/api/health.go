@@ -1,6 +1,15 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+	"sync/atomic"
+)
+
+var ready atomic.Bool
+
+func init() { ready.Store(true) }
+
+func SetReady(v bool) { ready.Store(v) }
 
 // Healthz — liveness probe.
 // @Summary      Liveness probe
@@ -22,6 +31,11 @@ func Healthz(w http.ResponseWriter, _ *http.Request) {
 // @Success      200 {string} string "ok"
 // @Router       /readyz [get]
 func Readyz(w http.ResponseWriter, _ *http.Request) {
+	if !ready.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("shutting down"))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }
