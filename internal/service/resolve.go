@@ -67,7 +67,9 @@ func (s *Service) buildParams() pipeline.Params {
 		DedupTimeGap:        s.cfg.DedupTimeGap,
 		IntersectMaxIter:    s.cfg.IntersectMaxIter,
 		MaxSpeedKmh:         s.cfg.MaxSpeedKmh,
+		MaxAccelKmhPerSec:   s.cfg.MaxAccelKmhPerSec,
 		MaxLoopMeters:       s.cfg.MaxLoopMeters,
 		MaxLoopSeconds:      s.cfg.MaxLoopSeconds,
+		SimplifyMinMeters:   s.cfg.SimplifyMinMeters,
 	}
 }

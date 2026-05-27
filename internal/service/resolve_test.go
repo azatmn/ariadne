@@ -19,6 +19,8 @@ func testConfig() *config.Config {
 		MaxPoints:           50_000,
 		IntersectMaxIter:    100,
 		MaxSpeedKmh:         150,
+		MaxAccelKmhPerSec:   30,
+		SimplifyMinMeters:   5.0,
 		MaxLoopMeters:       100,
 		MaxLoopSeconds:      10,
 	}

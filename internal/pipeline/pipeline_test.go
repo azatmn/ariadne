@@ -28,6 +28,8 @@ func TestRunFullPipeline(t *testing.T) {
 
 	p := Params{
 		MaxSpeedKmh:         150,
+		MaxAccelKmhPerSec:   30,
+		SimplifyMinMeters:   5.0,
 		DedupDistanceMeters: 2.0,
 		DedupTimeGap:        60 * time.Second,
 		IntersectMaxIter:    100,
@@ -60,6 +62,8 @@ func TestRunCollectsWarnings(t *testing.T) {
 
 	p := Params{
 		MaxSpeedKmh:         150,
+		MaxAccelKmhPerSec:   1000, // высокий порог — тест проверяет warnings от intersections, не acceleration
+		SimplifyMinMeters:   5.0,
 		DedupDistanceMeters: 2.0,
 		DedupTimeGap:        60 * time.Second,
 		IntersectMaxIter:    0,
@@ -87,6 +91,8 @@ func TestRunEarlyExitFewPoints(t *testing.T) {
 
 	p := Params{
 		MaxSpeedKmh:         150,
+		MaxAccelKmhPerSec:   30,
+		SimplifyMinMeters:   5.0,
 		DedupDistanceMeters: 2.0,
 		DedupTimeGap:        60 * time.Second,
 		IntersectMaxIter:    100,
@@ -105,6 +111,8 @@ func TestRunEarlyExitFewPoints(t *testing.T) {
 func TestRunEmpty(t *testing.T) {
 	p := Params{
 		MaxSpeedKmh:         150,
+		MaxAccelKmhPerSec:   30,
+		SimplifyMinMeters:   5.0,
 		DedupDistanceMeters: 2.0,
 		DedupTimeGap:        60 * time.Second,
 		IntersectMaxIter:    100,

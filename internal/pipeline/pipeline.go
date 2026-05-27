@@ -22,11 +22,12 @@ type Stage interface {
 type Params struct {
 	DedupDistanceMeters float64
 	DedupTimeGap        time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
-	// SimplifyMinMeters float64
-	IntersectMaxIter int
-	MaxSpeedKmh      float64
-	MaxLoopMeters    float64 // эвристика: петли больше этого периметра не трогаем (реальные развязки)
-	MaxLoopSeconds   float64 // эвристика: петли длиннее по времени не трогаем
+	SimplifyMinMeters   float64
+	IntersectMaxIter    int
+	MaxSpeedKmh         float64
+	MaxAccelKmhPerSec   float64
+	MaxLoopMeters       float64 // эвристика: петли больше этого периметра не трогаем (реальные развязки)
+	MaxLoopSeconds      float64 // эвристика: петли длиннее по времени не трогаем
 	// UseOSRM bool
 }
 
@@ -45,7 +46,7 @@ type Pipeline struct {
 // New собирает pipeline под заданные параметры.
 // Порядок (MVP):
 //
-//	SortByTime → FilterBySpeed → Deduplicate → RemoveSelfIntersections
+//	SortByTime → FilterBySpeed → FilterByAcceleration → Deduplicate → RemoveSelfIntersections → Simplify
 //
 // Speed ДО dedup: иначе склейка близких точек растворяет Δt вокруг телепорта,
 // и фильтр скорости пропустит выброс. Подробнее — Decisions.md.
@@ -55,12 +56,14 @@ func New(p Params) *Pipeline {
 	stages := []Stage{
 		SortByTime{},
 		FilterBySpeed{MaxKmh: p.MaxSpeedKmh},
+		FilterByAcceleration{MaxAccelKmhPerSec: p.MaxAccelKmhPerSec},
 		Deduplicate{DedupDistanceMeters: p.DedupDistanceMeters, MaxTimeGap: p.DedupTimeGap},
 		RemoveSelfIntersections{
 			IntersectMaxIter: p.IntersectMaxIter,
 			MaxLoopMeters:    p.MaxLoopMeters,
 			MaxLoopSeconds:   p.MaxLoopSeconds,
 		},
+		Simplify{MinMeters: p.SimplifyMinMeters},
 	}
 
 	return &Pipeline{stages: stages}

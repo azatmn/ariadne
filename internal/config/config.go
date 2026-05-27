@@ -27,6 +27,7 @@ type Config struct {
 	MaxSpeedKmh         float64
 	MaxLoopMeters       float64
 	MaxLoopSeconds      float64
+	MaxAccelKmhPerSec   float64
 
 	UseOSRM bool
 	OSRMURL string
@@ -60,8 +61,9 @@ func Load() (*Config, error) {
 		MaxSpeedKmh:         envFloat("MAX_SPEED_KMH", 150),
 		MaxLoopMeters:       envFloat("MAX_LOOP_METERS", 100),
 		MaxLoopSeconds:      envFloat("MAX_LOOP_SECONDS", 10),
+		MaxAccelKmhPerSec:   envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
 		IntersectMaxIter:    envInt("INTERSECT_MAX_ITER", 10_000),
-		// SimplifyMinMeters: envFloat("SIMPLIFY_MIN_METERS", 2.0), // post-MVP: Дугласа-Пекера
+		SimplifyMinMeters:   envFloat("SIMPLIFY_MIN_METERS", 5.0),
 
 		// Swagger
 		SwaggerEnabled: envBool("SWAGGER_ENABLED", false),

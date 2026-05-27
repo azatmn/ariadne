@@ -106,8 +106,10 @@ routeCompressed
   -> Decode (base64 -> zlib -> JSON -> []Point)
   -> SortByTime
   -> FilterBySpeed         удаляет GPS-телепорты (скорость > MAX_SPEED_KMH)
+  -> FilterByAcceleration  удаляет GPS-глюки с аномальным ускорением (> MAX_ACCEL_KMH_PER_SEC)
   -> Deduplicate           склеивает точки ближе DEDUP_DISTANCE_METERS и DEDUP_TIME_GAP
   -> RemoveSelfIntersections   убирает петли от GPS-глюков (с эвристиками, поддерживает context cancellation)
+  -> Simplify                  упрощение маршрута алгоритмом Дугласа-Пекера (SIMPLIFY_MIN_METERS)
   -> Encode ([]Point -> JSON -> zlib -> base64)
   -> TotalLength -> lengthMeters
 ```
@@ -220,9 +222,11 @@ swagger/                 сгенерированная Swagger-спека (swag
 | `DEDUP_DISTANCE_METERS` | `2.0` | порог близости точек для дедупликации (метры) |
 | `DEDUP_TIME_GAP` | `60s` | максимальный временной разрыв для дедупликации |
 | `MAX_SPEED_KMH` | `150` | скорость выше — GPS-телепорт, точка удаляется |
+| `MAX_ACCEL_KMH_PER_SEC` | `20` | ускорение выше — GPS-глюч, точка удаляется (км/ч за секунду) |
 | `MAX_LOOP_METERS` | `100` | петли больше — считаем реальными (не удаляем) |
 | `MAX_LOOP_SECONDS` | `10` | петли длиннее — считаем реальными (не удаляем) |
 | `INTERSECT_MAX_ITER` | `10000` | лимит итераций поиска пересечений |
+| `SIMPLIFY_MIN_METERS` | `5.0` | точки ближе этого расстояния от прямой убираются (Дугласа-Пекера) |
 | **Swagger** | | |
 | `SWAGGER_ENABLED` | `false` | `true` — включает `/swagger/*` эндпоинт |
 | **Logging** | | |

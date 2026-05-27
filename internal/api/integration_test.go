@@ -27,6 +27,8 @@ func TestIntegrationRealRoute(t *testing.T) {
 		MaxPoints:            50_000,
 		IntersectMaxIter:     10_000,
 		MaxSpeedKmh:          150,
+		MaxAccelKmhPerSec:    30,
+		SimplifyMinMeters:    5.0,
 		MaxLoopMeters:        100,
 		MaxLoopSeconds:       10,
 		MaxBodyBytes:         10 << 20,

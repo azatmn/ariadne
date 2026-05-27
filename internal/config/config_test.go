@@ -29,8 +29,10 @@ func TestLoadDefaults(t *testing.T) {
 		{"MaxPoints", cfg.MaxPoints, 50_000},
 		{"IntersectMaxIter", cfg.IntersectMaxIter, 10_000},
 		{"MaxSpeedKmh", cfg.MaxSpeedKmh, 150.0},
+		{"MaxAccelKmhPerSec", cfg.MaxAccelKmhPerSec, 20.0},
 		{"MaxLoopMeters", cfg.MaxLoopMeters, 100.0},
 		{"MaxLoopSeconds", cfg.MaxLoopSeconds, 10.0},
+		{"SimplifyMinMeters", cfg.SimplifyMinMeters, 5.0},
 		{"ResolveTimeout", cfg.ResolveTimeout, 25 * time.Second},
 		{"LogLevel", cfg.LogLevel, "info"},
 	}
