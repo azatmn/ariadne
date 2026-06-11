@@ -58,11 +58,6 @@ func New(p Params) *Pipeline {
 		FilterBySpeed{MaxKmh: p.MaxSpeedKmh},
 		FilterByAcceleration{MaxAccelKmhPerSec: p.MaxAccelKmhPerSec},
 		Deduplicate{DedupDistanceMeters: p.DedupDistanceMeters, MaxTimeGap: p.DedupTimeGap},
-		RemoveSelfIntersections{
-			IntersectMaxIter: p.IntersectMaxIter,
-			MaxLoopMeters:    p.MaxLoopMeters,
-			MaxLoopSeconds:   p.MaxLoopSeconds,
-		},
 		Simplify{MinMeters: p.SimplifyMinMeters},
 	}
 
