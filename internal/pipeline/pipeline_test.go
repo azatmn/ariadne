@@ -50,25 +50,25 @@ func TestRunFullPipeline(t *testing.T) {
 func TestRunCollectsWarnings(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 
-	// Маршрут с петлёй, но IntersectMaxIter=0 — intersections не обработает,
-	// вернёт warning
+	// Трек с телепорт-загоном: скачок далеко и возврат — RemoveTeleports вырежет
+	// и вернёт warning. Проверяем, что Run собирает warnings со стадий.
 	points := []geo.Point{
-		{Time: t0.Add(0 * time.Second), Lon: 37.617300, Lat: 55.755800},
-		{Time: t0.Add(1 * time.Second), Lon: 37.617300, Lat: 55.756100},
-		{Time: t0.Add(2 * time.Second), Lon: 37.617600, Lat: 55.755950},
-		{Time: t0.Add(3 * time.Second), Lon: 37.617000, Lat: 55.755950},
-		{Time: t0.Add(4 * time.Second), Lon: 37.617000, Lat: 55.756300},
+		{Time: t0.Add(0 * time.Second), Lon: 37.6170, Lat: 55.7550},
+		{Time: t0.Add(1 * time.Second), Lon: 37.6180, Lat: 55.7550},
+		{Time: t0.Add(2 * time.Second), Lon: 50.0000, Lat: 60.0000}, // телепорт
+		{Time: t0.Add(3 * time.Second), Lon: 37.6185, Lat: 55.7550}, // возврат
+		{Time: t0.Add(4 * time.Second), Lon: 37.6190, Lat: 55.7550},
 	}
 
 	p := Params{
-		MaxSpeedKmh:         150,
-		MaxAccelKmhPerSec:   1000, // высокий порог — тест проверяет warnings от intersections, не acceleration
-		SimplifyMinMeters:   5.0,
-		DedupDistanceMeters: 2.0,
-		DedupTimeGap:        60 * time.Second,
-		IntersectMaxIter:    0,
-		MaxLoopMeters:       500,
-		MaxLoopSeconds:      10,
+		MaxSpeedKmh:           150,
+		MaxAccelKmhPerSec:     1000, // высокий порог — изолируем warning телепорта
+		SimplifyMinMeters:     5.0,
+		DedupDistanceMeters:   2.0,
+		DedupTimeGap:          60 * time.Second,
+		TeleportJumpMeters:    15000,
+		TeleportReturnMeters:  2000,
+		TeleportMaxSpanMeters: 5000,
 	}
 
 	pl := New(p)
@@ -76,7 +76,7 @@ func TestRunCollectsWarnings(t *testing.T) {
 	_, warnings, _, err := pl.Run(context.Background(), points)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, warnings, "expected warnings from intersections (MaxIter=0), got none")
+	assert.NotEmpty(t, warnings, "expected warning from remove_teleports, got none")
 }
 
 func TestRunEarlyExitFewPoints(t *testing.T) {

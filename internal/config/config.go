@@ -19,15 +19,20 @@ type Config struct {
 	MaxDecompressedBytes int64
 	ResolveTimeout       time.Duration
 
-	DedupDistanceMeters float64
-	DedupTimeGap        time.Duration
-	SimplifyMinMeters   float64
-	MaxPoints           int
-	IntersectMaxIter    int
-	MaxSpeedKmh         float64
-	MaxLoopMeters       float64
-	MaxLoopSeconds      float64
-	MaxAccelKmhPerSec   float64
+	DedupDistanceMeters   float64
+	DedupTimeGap          time.Duration
+	SimplifyMinMeters     float64
+	MaxPoints             int
+	IntersectMaxIter      int
+	MaxSpeedKmh           float64
+	MaxLoopMeters         float64
+	MaxLoopSeconds        float64
+	MaxAccelKmhPerSec     float64
+	TeleportJumpMeters    float64
+	TeleportReturnMeters  float64
+	TeleportMaxSpanMeters float64
+	StopRadiusMeters      float64
+	StopMinPoints         int
 
 	UseOSRM bool
 	OSRMURL string
@@ -56,14 +61,19 @@ func Load() (*Config, error) {
 		ResolveTimeout:       envDuration("RESOLVE_TIMEOUT", 25*time.Second),
 
 		// Pipeline
-		DedupDistanceMeters: envFloat("DEDUP_DISTANCE_METERS", 2.0),
-		DedupTimeGap:        envDuration("DEDUP_TIME_GAP", 60*time.Second),
-		MaxSpeedKmh:         envFloat("MAX_SPEED_KMH", 150),
-		MaxLoopMeters:       envFloat("MAX_LOOP_METERS", 100),
-		MaxLoopSeconds:      envFloat("MAX_LOOP_SECONDS", 10),
-		MaxAccelKmhPerSec:   envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
-		IntersectMaxIter:    envInt("INTERSECT_MAX_ITER", 10_000),
-		SimplifyMinMeters:   envFloat("SIMPLIFY_MIN_METERS", 5.0),
+		DedupDistanceMeters:   envFloat("DEDUP_DISTANCE_METERS", 2.0),
+		DedupTimeGap:          envDuration("DEDUP_TIME_GAP", 60*time.Second),
+		MaxSpeedKmh:           envFloat("MAX_SPEED_KMH", 150),
+		MaxLoopMeters:         envFloat("MAX_LOOP_METERS", 100),
+		MaxLoopSeconds:        envFloat("MAX_LOOP_SECONDS", 10),
+		MaxAccelKmhPerSec:     envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
+		TeleportJumpMeters:    envFloat("TELEPORT_JUMP_METERS", 15000),
+		TeleportReturnMeters:  envFloat("TELEPORT_RETURN_METERS", 2000),
+		TeleportMaxSpanMeters: envFloat("TELEPORT_MAX_SPAN_METERS", 5000),
+		StopRadiusMeters:      envFloat("STOP_RADIUS_METERS", 50),
+		StopMinPoints:         envInt("STOP_MIN_POINTS", 5),
+		IntersectMaxIter:      envInt("INTERSECT_MAX_ITER", 10_000),
+		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
 
 		// Swagger
 		SwaggerEnabled: envBool("SWAGGER_ENABLED", false),

@@ -20,14 +20,19 @@ type Stage interface {
 // Params — параметры запроса, которые могут переопределять дефолты конфига.
 // Заполняется api/handler из тела запроса.
 type Params struct {
-	DedupDistanceMeters float64
-	DedupTimeGap        time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
-	SimplifyMinMeters   float64
-	IntersectMaxIter    int
-	MaxSpeedKmh         float64
-	MaxAccelKmhPerSec   float64
-	MaxLoopMeters       float64 // эвристика: петли больше этого периметра не трогаем (реальные развязки)
-	MaxLoopSeconds      float64 // эвристика: петли длиннее по времени не трогаем
+	DedupDistanceMeters   float64
+	DedupTimeGap          time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
+	SimplifyMinMeters     float64
+	IntersectMaxIter      int
+	MaxSpeedKmh           float64
+	MaxAccelKmhPerSec     float64
+	TeleportJumpMeters    float64 // скачок больше этого = подозрение на телепорт-загон
+	TeleportReturnMeters  float64 // возврат ближе этого к точке перед скачком = вырезаем загон
+	TeleportMaxSpanMeters float64 // вырезаем загон только если его размах меньше этого
+	StopRadiusMeters      float64 // размер пятна стоянки для сворачивания
+	StopMinPoints         int     // от скольких точек в пятне считаем стоянкой
+	MaxLoopMeters         float64 // эвристика: петли больше этого периметра не трогаем (реальные развязки)
+	MaxLoopSeconds        float64 // эвристика: петли длиннее по времени не трогаем
 	// UseOSRM bool
 }
 
@@ -55,9 +60,11 @@ type Pipeline struct {
 func New(p Params) *Pipeline {
 	stages := []Stage{
 		SortByTime{},
+		RemoveTeleports{JumpMeters: p.TeleportJumpMeters, ReturnMeters: p.TeleportReturnMeters, MaxSpanMeters: p.TeleportMaxSpanMeters},
 		FilterBySpeed{MaxKmh: p.MaxSpeedKmh},
 		FilterByAcceleration{MaxAccelKmhPerSec: p.MaxAccelKmhPerSec},
 		Deduplicate{DedupDistanceMeters: p.DedupDistanceMeters, MaxTimeGap: p.DedupTimeGap},
+		CollapseStops{RadiusMeters: p.StopRadiusMeters, MinPoints: p.StopMinPoints},
 		Simplify{MinMeters: p.SimplifyMinMeters},
 	}
 
@@ -70,6 +77,13 @@ func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, [
 	var stats []StageStats
 
 	for _, s := range pl.stages {
+		// Проверка дедлайна между стадиями — защита от зависания на долгой обработке.
+		// Раньше ctx.Err() проверялся внутри intersections; после её удаления
+		// механизм перенесён сюда, чтобы работать независимо от состава стадий.
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
+
 		before := len(points)
 		start := time.Now()
 
