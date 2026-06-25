@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	_ "ariadne/swagger"
 
@@ -16,6 +17,7 @@ import (
 	"ariadne/internal/config"
 	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
+	"ariadne/internal/taskstore"
 )
 
 // @title Ariadne API
@@ -36,6 +38,23 @@ func main() {
 		slog.Warn("invalid LOG_LEVEL, using default INFO", "value", cfg.LogLevel, "error", err)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+
+	// Redis — хранилище задач и результатов. Соединение ленивое, поэтому
+	// сразу проверяем связь: если Redis недоступен, стартовать нет смысла.
+	store := taskstore.New(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := store.Ping(pingCtx); err != nil {
+		pingCancel()
+		logger.Error("redis unavailable", "addr", cfg.RedisAddr, "error", err)
+		os.Exit(1)
+	}
+	pingCancel()
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Error("redis close error", "error", err)
+		}
+	}()
+	logger.Info("redis connected", "addr", cfg.RedisAddr, "db", cfg.RedisDB)
 
 	svc := service.New(cfg)
 

@@ -2,9 +2,31 @@ services:
   ariadne:
     build: .
     env_file: .env
+    environment:
+      # Внутри compose-сети Redis доступен по имени сервиса, а не localhost.
+      REDIS_ADDR: redis:6379
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
       - "${GRPC_PORT:-9090}:${GRPC_PORT:-9090}"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     mem_limit: 256m
     cpus: 1.0
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:

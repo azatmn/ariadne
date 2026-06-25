@@ -34,6 +34,13 @@ type Config struct {
 	StopRadiusMeters      float64
 	StopMinPoints         int
 
+	// Redis (async: очередь задач + хранилище результатов)
+	RedisAddr     string
+	RedisDB       int
+	RedisPassword string
+	WorkerCount   int
+	ResultTTL     time.Duration
+
 	UseOSRM bool
 	OSRMURL string
 
@@ -75,21 +82,20 @@ func Load() (*Config, error) {
 		IntersectMaxIter:      envInt("INTERSECT_MAX_ITER", 10_000),
 		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
 
+		// Redis (async: очередь + хранилище результатов)
+		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),
+		RedisDB:       envInt("REDIS_DB", 10),
+		RedisPassword: envStr("REDIS_PASSWORD", ""),
+		WorkerCount:   envInt("WORKER_COUNT", 4),
+		ResultTTL:     envDuration("RESULT_TTL", time.Hour),
+
 		// Swagger
 		SwaggerEnabled: envBool("SWAGGER_ENABLED", false),
 		GRPCReflection: envBool("GRPC_REFLECTION", false),
 
 		// Logging
 		LogLevel: envStr("LOG_LEVEL", "info"),
-
-		// OSRM (post-MVP)
-		// UseOSRM: envBool("USE_OSRM", false),
-		// OSRMURL: envStr("OSRM_URL", ""),
 	}
-
-	//if cfg.UseOSRM && cfg.OSRMURL == "" {
-	//	return nil, fmt.Errorf("config: USE_OSRM=true but OSRM_URL is empty")
-	//}
 
 	return cfg, nil
 }
