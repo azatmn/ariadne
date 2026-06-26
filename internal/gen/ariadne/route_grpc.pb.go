@@ -19,14 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RouteService_ResolveCollisions_FullMethodName = "/ariadne.v1.RouteService/ResolveCollisions"
+	RouteService_SubmitTask_FullMethodName   = "/ariadne.v1.RouteService/SubmitTask"
+	RouteService_GetTask_FullMethodName      = "/ariadne.v1.RouteService/GetTask"
+	RouteService_GetTaskDebug_FullMethodName = "/ariadne.v1.RouteService/GetTaskDebug"
 )
 
 // RouteServiceClient is the client API for RouteService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// RouteService — асинхронная обработка маршрутов: сдать задачу → опрашивать по
+// taskKey. Синхронный ResolveCollisions убран (потребителя на gRPC не было).
 type RouteServiceClient interface {
-	ResolveCollisions(ctx context.Context, in *ResolveCollisionsRequest, opts ...grpc.CallOption) (*ResolveCollisionsResponse, error)
+	// SubmitTask принимает сжатый маршрут, ставит задачу в очередь, отдаёт taskKey.
+	SubmitTask(ctx context.Context, in *SubmitTaskRequest, opts ...grpc.CallOption) (*SubmitTaskResponse, error)
+	// GetTask отдаёт статус и — при done — очищенный маршрут с длиной.
+	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*GetTaskResponse, error)
+	// GetTaskDebug отдаёт разбор по стадиям pipeline.
+	GetTaskDebug(ctx context.Context, in *GetTaskDebugRequest, opts ...grpc.CallOption) (*GetTaskDebugResponse, error)
 }
 
 type routeServiceClient struct {
@@ -37,10 +47,30 @@ func NewRouteServiceClient(cc grpc.ClientConnInterface) RouteServiceClient {
 	return &routeServiceClient{cc}
 }
 
-func (c *routeServiceClient) ResolveCollisions(ctx context.Context, in *ResolveCollisionsRequest, opts ...grpc.CallOption) (*ResolveCollisionsResponse, error) {
+func (c *routeServiceClient) SubmitTask(ctx context.Context, in *SubmitTaskRequest, opts ...grpc.CallOption) (*SubmitTaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ResolveCollisionsResponse)
-	err := c.cc.Invoke(ctx, RouteService_ResolveCollisions_FullMethodName, in, out, cOpts...)
+	out := new(SubmitTaskResponse)
+	err := c.cc.Invoke(ctx, RouteService_SubmitTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeServiceClient) GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*GetTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTaskResponse)
+	err := c.cc.Invoke(ctx, RouteService_GetTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeServiceClient) GetTaskDebug(ctx context.Context, in *GetTaskDebugRequest, opts ...grpc.CallOption) (*GetTaskDebugResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTaskDebugResponse)
+	err := c.cc.Invoke(ctx, RouteService_GetTaskDebug_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +80,16 @@ func (c *routeServiceClient) ResolveCollisions(ctx context.Context, in *ResolveC
 // RouteServiceServer is the server API for RouteService service.
 // All implementations must embed UnimplementedRouteServiceServer
 // for forward compatibility.
+//
+// RouteService — асинхронная обработка маршрутов: сдать задачу → опрашивать по
+// taskKey. Синхронный ResolveCollisions убран (потребителя на gRPC не было).
 type RouteServiceServer interface {
-	ResolveCollisions(context.Context, *ResolveCollisionsRequest) (*ResolveCollisionsResponse, error)
+	// SubmitTask принимает сжатый маршрут, ставит задачу в очередь, отдаёт taskKey.
+	SubmitTask(context.Context, *SubmitTaskRequest) (*SubmitTaskResponse, error)
+	// GetTask отдаёт статус и — при done — очищенный маршрут с длиной.
+	GetTask(context.Context, *GetTaskRequest) (*GetTaskResponse, error)
+	// GetTaskDebug отдаёт разбор по стадиям pipeline.
+	GetTaskDebug(context.Context, *GetTaskDebugRequest) (*GetTaskDebugResponse, error)
 	mustEmbedUnimplementedRouteServiceServer()
 }
 
@@ -62,8 +100,14 @@ type RouteServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRouteServiceServer struct{}
 
-func (UnimplementedRouteServiceServer) ResolveCollisions(context.Context, *ResolveCollisionsRequest) (*ResolveCollisionsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ResolveCollisions not implemented")
+func (UnimplementedRouteServiceServer) SubmitTask(context.Context, *SubmitTaskRequest) (*SubmitTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitTask not implemented")
+}
+func (UnimplementedRouteServiceServer) GetTask(context.Context, *GetTaskRequest) (*GetTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTask not implemented")
+}
+func (UnimplementedRouteServiceServer) GetTaskDebug(context.Context, *GetTaskDebugRequest) (*GetTaskDebugResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTaskDebug not implemented")
 }
 func (UnimplementedRouteServiceServer) mustEmbedUnimplementedRouteServiceServer() {}
 func (UnimplementedRouteServiceServer) testEmbeddedByValue()                      {}
@@ -86,20 +130,56 @@ func RegisterRouteServiceServer(s grpc.ServiceRegistrar, srv RouteServiceServer)
 	s.RegisterService(&RouteService_ServiceDesc, srv)
 }
 
-func _RouteService_ResolveCollisions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ResolveCollisionsRequest)
+func _RouteService_SubmitTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitTaskRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RouteServiceServer).ResolveCollisions(ctx, in)
+		return srv.(RouteServiceServer).SubmitTask(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RouteService_ResolveCollisions_FullMethodName,
+		FullMethod: RouteService_SubmitTask_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RouteServiceServer).ResolveCollisions(ctx, req.(*ResolveCollisionsRequest))
+		return srv.(RouteServiceServer).SubmitTask(ctx, req.(*SubmitTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteService_GetTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteServiceServer).GetTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteService_GetTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteServiceServer).GetTask(ctx, req.(*GetTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteService_GetTaskDebug_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTaskDebugRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteServiceServer).GetTaskDebug(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteService_GetTaskDebug_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteServiceServer).GetTaskDebug(ctx, req.(*GetTaskDebugRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -112,8 +192,16 @@ var RouteService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*RouteServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "ResolveCollisions",
-			Handler:    _RouteService_ResolveCollisions_Handler,
+			MethodName: "SubmitTask",
+			Handler:    _RouteService_SubmitTask_Handler,
+		},
+		{
+			MethodName: "GetTask",
+			Handler:    _RouteService_GetTask_Handler,
+		},
+		{
+			MethodName: "GetTaskDebug",
+			Handler:    _RouteService_GetTaskDebug_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

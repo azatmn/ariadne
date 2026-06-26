@@ -79,8 +79,8 @@ func main() {
 		IdleTimeout:  cfg.IdleTimeout,
 	}
 
-	// gRPC
-	grpcHandler := grpcapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	// gRPC (async-only: синхронный ResolveCollisions убран)
+	grpcHandler := grpcapi.NewHandler(store)
 	grpcSrv := grpcapi.NewServer(grpcHandler, logger, cfg.GRPCMaxRecvMsgSize, cfg.GRPCReflection)
 
 	errCh := make(chan error, 2)

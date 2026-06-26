@@ -21,28 +21,27 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ResolveCollisionsRequest struct {
+type SubmitTaskRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	RouteCompressed string                 `protobuf:"bytes,1,opt,name=route_compressed,json=routeCompressed,proto3" json:"route_compressed,omitempty"`
-	ReturnDebug     bool                   `protobuf:"varint,2,opt,name=return_debug,json=returnDebug,proto3" json:"return_debug,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *ResolveCollisionsRequest) Reset() {
-	*x = ResolveCollisionsRequest{}
+func (x *SubmitTaskRequest) Reset() {
+	*x = SubmitTaskRequest{}
 	mi := &file_route_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ResolveCollisionsRequest) String() string {
+func (x *SubmitTaskRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ResolveCollisionsRequest) ProtoMessage() {}
+func (*SubmitTaskRequest) ProtoMessage() {}
 
-func (x *ResolveCollisionsRequest) ProtoReflect() protoreflect.Message {
+func (x *SubmitTaskRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_route_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -54,52 +53,39 @@ func (x *ResolveCollisionsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ResolveCollisionsRequest.ProtoReflect.Descriptor instead.
-func (*ResolveCollisionsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitTaskRequest.ProtoReflect.Descriptor instead.
+func (*SubmitTaskRequest) Descriptor() ([]byte, []int) {
 	return file_route_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *ResolveCollisionsRequest) GetRouteCompressed() string {
+func (x *SubmitTaskRequest) GetRouteCompressed() string {
 	if x != nil {
 		return x.RouteCompressed
 	}
 	return ""
 }
 
-func (x *ResolveCollisionsRequest) GetReturnDebug() bool {
-	if x != nil {
-		return x.ReturnDebug
-	}
-	return false
+type SubmitTaskResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskKey       string                 `protobuf:"bytes,1,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-type ResolveCollisionsResponse struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	RouteCompressed    string                 `protobuf:"bytes,1,opt,name=route_compressed,json=routeCompressed,proto3" json:"route_compressed,omitempty"`
-	LengthMeters       float64                `protobuf:"fixed64,2,opt,name=length_meters,json=lengthMeters,proto3" json:"length_meters,omitempty"`
-	LengthBeforeMeters float64                `protobuf:"fixed64,3,opt,name=length_before_meters,json=lengthBeforeMeters,proto3" json:"length_before_meters,omitempty"`
-	PointsCount        int32                  `protobuf:"varint,4,opt,name=points_count,json=pointsCount,proto3" json:"points_count,omitempty"`
-	RemovedPointsCount int32                  `protobuf:"varint,5,opt,name=removed_points_count,json=removedPointsCount,proto3" json:"removed_points_count,omitempty"`
-	Warnings           []string               `protobuf:"bytes,6,rep,name=warnings,proto3" json:"warnings,omitempty"`
-	Debug              []*StageStats          `protobuf:"bytes,7,rep,name=debug,proto3" json:"debug,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *ResolveCollisionsResponse) Reset() {
-	*x = ResolveCollisionsResponse{}
+func (x *SubmitTaskResponse) Reset() {
+	*x = SubmitTaskResponse{}
 	mi := &file_route_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ResolveCollisionsResponse) String() string {
+func (x *SubmitTaskResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ResolveCollisionsResponse) ProtoMessage() {}
+func (*SubmitTaskResponse) ProtoMessage() {}
 
-func (x *ResolveCollisionsResponse) ProtoReflect() protoreflect.Message {
+func (x *SubmitTaskResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_route_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -111,54 +97,236 @@ func (x *ResolveCollisionsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ResolveCollisionsResponse.ProtoReflect.Descriptor instead.
-func (*ResolveCollisionsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitTaskResponse.ProtoReflect.Descriptor instead.
+func (*SubmitTaskResponse) Descriptor() ([]byte, []int) {
 	return file_route_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *ResolveCollisionsResponse) GetRouteCompressed() string {
+func (x *SubmitTaskResponse) GetTaskKey() string {
+	if x != nil {
+		return x.TaskKey
+	}
+	return ""
+}
+
+type GetTaskRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskKey       string                 `protobuf:"bytes,1,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTaskRequest) Reset() {
+	*x = GetTaskRequest{}
+	mi := &file_route_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTaskRequest) ProtoMessage() {}
+
+func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_route_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTaskRequest.ProtoReflect.Descriptor instead.
+func (*GetTaskRequest) Descriptor() ([]byte, []int) {
+	return file_route_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GetTaskRequest) GetTaskKey() string {
+	if x != nil {
+		return x.TaskKey
+	}
+	return ""
+}
+
+type GetTaskResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TaskKey         string                 `protobuf:"bytes,1,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
+	Status          string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                          // pending / done / failed
+	RouteCompressed string                 `protobuf:"bytes,3,opt,name=route_compressed,json=routeCompressed,proto3" json:"route_compressed,omitempty"` // при done
+	LengthMeters    float64                `protobuf:"fixed64,4,opt,name=length_meters,json=lengthMeters,proto3" json:"length_meters,omitempty"`        // при done
+	Error           string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`                                            // при failed
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GetTaskResponse) Reset() {
+	*x = GetTaskResponse{}
+	mi := &file_route_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTaskResponse) ProtoMessage() {}
+
+func (x *GetTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_route_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTaskResponse.ProtoReflect.Descriptor instead.
+func (*GetTaskResponse) Descriptor() ([]byte, []int) {
+	return file_route_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetTaskResponse) GetTaskKey() string {
+	if x != nil {
+		return x.TaskKey
+	}
+	return ""
+}
+
+func (x *GetTaskResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *GetTaskResponse) GetRouteCompressed() string {
 	if x != nil {
 		return x.RouteCompressed
 	}
 	return ""
 }
 
-func (x *ResolveCollisionsResponse) GetLengthMeters() float64 {
+func (x *GetTaskResponse) GetLengthMeters() float64 {
 	if x != nil {
 		return x.LengthMeters
 	}
 	return 0
 }
 
-func (x *ResolveCollisionsResponse) GetLengthBeforeMeters() float64 {
+func (x *GetTaskResponse) GetError() string {
 	if x != nil {
-		return x.LengthBeforeMeters
+		return x.Error
 	}
-	return 0
+	return ""
 }
 
-func (x *ResolveCollisionsResponse) GetPointsCount() int32 {
-	if x != nil {
-		return x.PointsCount
-	}
-	return 0
+type GetTaskDebugRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskKey       string                 `protobuf:"bytes,1,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ResolveCollisionsResponse) GetRemovedPointsCount() int32 {
-	if x != nil {
-		return x.RemovedPointsCount
-	}
-	return 0
+func (x *GetTaskDebugRequest) Reset() {
+	*x = GetTaskDebugRequest{}
+	mi := &file_route_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
 }
 
-func (x *ResolveCollisionsResponse) GetWarnings() []string {
-	if x != nil {
-		return x.Warnings
-	}
-	return nil
+func (x *GetTaskDebugRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
 }
 
-func (x *ResolveCollisionsResponse) GetDebug() []*StageStats {
+func (*GetTaskDebugRequest) ProtoMessage() {}
+
+func (x *GetTaskDebugRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_route_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTaskDebugRequest.ProtoReflect.Descriptor instead.
+func (*GetTaskDebugRequest) Descriptor() ([]byte, []int) {
+	return file_route_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetTaskDebugRequest) GetTaskKey() string {
+	if x != nil {
+		return x.TaskKey
+	}
+	return ""
+}
+
+type GetTaskDebugResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskKey       string                 `protobuf:"bytes,1,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Debug         []*StageStats          `protobuf:"bytes,3,rep,name=debug,proto3" json:"debug,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTaskDebugResponse) Reset() {
+	*x = GetTaskDebugResponse{}
+	mi := &file_route_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTaskDebugResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTaskDebugResponse) ProtoMessage() {}
+
+func (x *GetTaskDebugResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_route_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTaskDebugResponse.ProtoReflect.Descriptor instead.
+func (*GetTaskDebugResponse) Descriptor() ([]byte, []int) {
+	return file_route_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetTaskDebugResponse) GetTaskKey() string {
+	if x != nil {
+		return x.TaskKey
+	}
+	return ""
+}
+
+func (x *GetTaskDebugResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *GetTaskDebugResponse) GetDebug() []*StageStats {
 	if x != nil {
 		return x.Debug
 	}
@@ -177,7 +345,7 @@ type StageStats struct {
 
 func (x *StageStats) Reset() {
 	*x = StageStats{}
-	mi := &file_route_proto_msgTypes[2]
+	mi := &file_route_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -189,7 +357,7 @@ func (x *StageStats) String() string {
 func (*StageStats) ProtoMessage() {}
 
 func (x *StageStats) ProtoReflect() protoreflect.Message {
-	mi := &file_route_proto_msgTypes[2]
+	mi := &file_route_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -202,7 +370,7 @@ func (x *StageStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StageStats.ProtoReflect.Descriptor instead.
 func (*StageStats) Descriptor() ([]byte, []int) {
-	return file_route_proto_rawDescGZIP(), []int{2}
+	return file_route_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StageStats) GetName() string {
@@ -238,26 +406,36 @@ var File_route_proto protoreflect.FileDescriptor
 const file_route_proto_rawDesc = "" +
 	"\n" +
 	"\vroute.proto\x12\n" +
-	"ariadne.v1\"h\n" +
-	"\x18ResolveCollisionsRequest\x12)\n" +
-	"\x10route_compressed\x18\x01 \x01(\tR\x0frouteCompressed\x12!\n" +
-	"\freturn_debug\x18\x02 \x01(\bR\vreturnDebug\"\xbc\x02\n" +
-	"\x19ResolveCollisionsResponse\x12)\n" +
-	"\x10route_compressed\x18\x01 \x01(\tR\x0frouteCompressed\x12#\n" +
-	"\rlength_meters\x18\x02 \x01(\x01R\flengthMeters\x120\n" +
-	"\x14length_before_meters\x18\x03 \x01(\x01R\x12lengthBeforeMeters\x12!\n" +
-	"\fpoints_count\x18\x04 \x01(\x05R\vpointsCount\x120\n" +
-	"\x14removed_points_count\x18\x05 \x01(\x05R\x12removedPointsCount\x12\x1a\n" +
-	"\bwarnings\x18\x06 \x03(\tR\bwarnings\x12,\n" +
-	"\x05debug\x18\a \x03(\v2\x16.ariadne.v1.StageStatsR\x05debug\"\x82\x01\n" +
+	"ariadne.v1\">\n" +
+	"\x11SubmitTaskRequest\x12)\n" +
+	"\x10route_compressed\x18\x01 \x01(\tR\x0frouteCompressed\"/\n" +
+	"\x12SubmitTaskResponse\x12\x19\n" +
+	"\btask_key\x18\x01 \x01(\tR\ataskKey\"+\n" +
+	"\x0eGetTaskRequest\x12\x19\n" +
+	"\btask_key\x18\x01 \x01(\tR\ataskKey\"\xaa\x01\n" +
+	"\x0fGetTaskResponse\x12\x19\n" +
+	"\btask_key\x18\x01 \x01(\tR\ataskKey\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12)\n" +
+	"\x10route_compressed\x18\x03 \x01(\tR\x0frouteCompressed\x12#\n" +
+	"\rlength_meters\x18\x04 \x01(\x01R\flengthMeters\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"0\n" +
+	"\x13GetTaskDebugRequest\x12\x19\n" +
+	"\btask_key\x18\x01 \x01(\tR\ataskKey\"w\n" +
+	"\x14GetTaskDebugResponse\x12\x19\n" +
+	"\btask_key\x18\x01 \x01(\tR\ataskKey\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12,\n" +
+	"\x05debug\x18\x03 \x03(\v2\x16.ariadne.v1.StageStatsR\x05debug\"\x82\x01\n" +
 	"\n" +
 	"StageStats\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
 	"\rpoints_before\x18\x02 \x01(\x05R\fpointsBefore\x12!\n" +
 	"\fpoints_after\x18\x03 \x01(\x05R\vpointsAfter\x12\x18\n" +
-	"\aelapsed\x18\x04 \x01(\tR\aelapsed2p\n" +
-	"\fRouteService\x12`\n" +
-	"\x11ResolveCollisions\x12$.ariadne.v1.ResolveCollisionsRequest\x1a%.ariadne.v1.ResolveCollisionsResponseB(Z&ariadne/internal/gen/ariadne;ariadnepbb\x06proto3"
+	"\aelapsed\x18\x04 \x01(\tR\aelapsed2\xf2\x01\n" +
+	"\fRouteService\x12K\n" +
+	"\n" +
+	"SubmitTask\x12\x1d.ariadne.v1.SubmitTaskRequest\x1a\x1e.ariadne.v1.SubmitTaskResponse\x12B\n" +
+	"\aGetTask\x12\x1a.ariadne.v1.GetTaskRequest\x1a\x1b.ariadne.v1.GetTaskResponse\x12Q\n" +
+	"\fGetTaskDebug\x12\x1f.ariadne.v1.GetTaskDebugRequest\x1a .ariadne.v1.GetTaskDebugResponseB(Z&ariadne/internal/gen/ariadne;ariadnepbb\x06proto3"
 
 var (
 	file_route_proto_rawDescOnce sync.Once
@@ -271,18 +449,26 @@ func file_route_proto_rawDescGZIP() []byte {
 	return file_route_proto_rawDescData
 }
 
-var file_route_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_route_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_route_proto_goTypes = []any{
-	(*ResolveCollisionsRequest)(nil),  // 0: ariadne.v1.ResolveCollisionsRequest
-	(*ResolveCollisionsResponse)(nil), // 1: ariadne.v1.ResolveCollisionsResponse
-	(*StageStats)(nil),                // 2: ariadne.v1.StageStats
+	(*SubmitTaskRequest)(nil),    // 0: ariadne.v1.SubmitTaskRequest
+	(*SubmitTaskResponse)(nil),   // 1: ariadne.v1.SubmitTaskResponse
+	(*GetTaskRequest)(nil),       // 2: ariadne.v1.GetTaskRequest
+	(*GetTaskResponse)(nil),      // 3: ariadne.v1.GetTaskResponse
+	(*GetTaskDebugRequest)(nil),  // 4: ariadne.v1.GetTaskDebugRequest
+	(*GetTaskDebugResponse)(nil), // 5: ariadne.v1.GetTaskDebugResponse
+	(*StageStats)(nil),           // 6: ariadne.v1.StageStats
 }
 var file_route_proto_depIdxs = []int32{
-	2, // 0: ariadne.v1.ResolveCollisionsResponse.debug:type_name -> ariadne.v1.StageStats
-	0, // 1: ariadne.v1.RouteService.ResolveCollisions:input_type -> ariadne.v1.ResolveCollisionsRequest
-	1, // 2: ariadne.v1.RouteService.ResolveCollisions:output_type -> ariadne.v1.ResolveCollisionsResponse
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
+	6, // 0: ariadne.v1.GetTaskDebugResponse.debug:type_name -> ariadne.v1.StageStats
+	0, // 1: ariadne.v1.RouteService.SubmitTask:input_type -> ariadne.v1.SubmitTaskRequest
+	2, // 2: ariadne.v1.RouteService.GetTask:input_type -> ariadne.v1.GetTaskRequest
+	4, // 3: ariadne.v1.RouteService.GetTaskDebug:input_type -> ariadne.v1.GetTaskDebugRequest
+	1, // 4: ariadne.v1.RouteService.SubmitTask:output_type -> ariadne.v1.SubmitTaskResponse
+	3, // 5: ariadne.v1.RouteService.GetTask:output_type -> ariadne.v1.GetTaskResponse
+	5, // 6: ariadne.v1.RouteService.GetTaskDebug:output_type -> ariadne.v1.GetTaskDebugResponse
+	4, // [4:7] is the sub-list for method output_type
+	1, // [1:4] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -299,7 +485,7 @@ func file_route_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_route_proto_rawDesc), len(file_route_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
