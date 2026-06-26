@@ -6,24 +6,27 @@ package taskstore
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// Store — обёртка над клиентом Redis.
+// Store — обёртка над клиентом Redis. ttl — время жизни карточки задачи.
 type Store struct {
 	rdb *redis.Client
+	ttl time.Duration
 }
 
 // New создаёт Store. Само соединение ленивое: реальную связь устанавливает
 // первый запрос, поэтому на старте обязательно вызвать Ping.
-func New(addr string, db int, password string) *Store {
+func New(addr string, db int, password string, ttl time.Duration) *Store {
 	return &Store{
 		rdb: redis.NewClient(&redis.Options{
 			Addr:     addr,
 			Password: password,
 			DB:       db,
 		}),
+		ttl: ttl,
 	}
 }
 

@@ -36,7 +36,7 @@ func TestIntegrationRealRoute(t *testing.T) {
 		ResolveTimeout:       25 * time.Second,
 	}
 	logger := testLogger()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes, false)
 
 	body := `{"routeCompressed":"` + strings.TrimSpace(string(routeData)) + `"}`
@@ -66,7 +66,7 @@ func TestIntegrationHealthEndpoints(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes, false)
 
 	tests := []struct {
@@ -94,7 +94,7 @@ func TestIntegrationSwaggerRoute(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes, true)
 
 	r := httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil)
@@ -109,7 +109,7 @@ func TestIntegrationMethodNotAllowed(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := NewRouter(h, logger, cfg.MaxBodyBytes, false)
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/routes/resolve-collisions", nil)

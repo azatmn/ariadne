@@ -47,13 +47,13 @@ func testConfig() *config.Config {
 func testHandler() http.HandlerFunc {
 	logger := slog.Default()
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	return ErrorMiddleware(logger)(h.HandleResolve)
 }
 
 func testHandlerWithConfig(cfg *config.Config) http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	return ErrorMiddleware(logger)(h.HandleResolve)
 }
 
@@ -65,21 +65,6 @@ func testRoute(t *testing.T) string {
 		{Time: t0.Add(10 * time.Second), Lon: 37.617400, Lat: 55.755900},
 		{Time: t0.Add(20 * time.Second), Lon: 37.617500, Lat: 55.756000},
 		{Time: t0.Add(30 * time.Second), Lon: 37.617600, Lat: 55.756100},
-	}
-	encoded, err := codec.Encode(points)
-	require.NoError(t, err)
-	return encoded
-}
-
-func testRouteWithLoop(t *testing.T) string {
-	t.Helper()
-	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
-	points := []geo.Point{
-		{Time: t0.Add(0 * time.Second), Lon: 37.617300, Lat: 55.755800},
-		{Time: t0.Add(1 * time.Second), Lon: 37.617300, Lat: 55.756100},
-		{Time: t0.Add(2 * time.Second), Lon: 37.617600, Lat: 55.755950},
-		{Time: t0.Add(3 * time.Second), Lon: 37.617000, Lat: 55.755950},
-		{Time: t0.Add(4 * time.Second), Lon: 37.617000, Lat: 55.756300},
 	}
 	encoded, err := codec.Encode(points)
 	require.NoError(t, err)
@@ -269,7 +254,7 @@ func TestHandlerTooFewPointsAfterPipeline(t *testing.T) {
 func TestHandlerMaxBytesError(t *testing.T) {
 	logger := slog.Default()
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg), nil, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	handler := LimitBody(50)(ErrorMiddleware(logger)(h.HandleResolve))
 
 	bigBody := `{"routeCompressed":"` + strings.Repeat("x", 100) + `"}`

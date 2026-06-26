@@ -11,6 +11,7 @@ import (
 	"ariadne/internal/logger"
 	"ariadne/internal/pipeline"
 	"ariadne/internal/service"
+	"ariadne/internal/taskstore"
 )
 
 type ResolveRequest struct {
@@ -30,12 +31,15 @@ type ResolveResponse struct {
 
 type Handler struct {
 	svc                  *service.Service
+	store                *taskstore.Store
 	maxDecompressedBytes int64
 	resolveTimeout       time.Duration
 }
 
-func NewHandler(svc *service.Service, maxDecompressedBytes int64, resolveTimeout time.Duration) *Handler {
-	return &Handler{svc: svc, maxDecompressedBytes: maxDecompressedBytes, resolveTimeout: resolveTimeout}
+// NewHandler собирает HTTP-хендлер. svc нужен синхронному /resolve-collisions
+// (под снос), store — асинхронным /v1/tasks. Синхронные тесты передают store=nil.
+func NewHandler(svc *service.Service, store *taskstore.Store, maxDecompressedBytes int64, resolveTimeout time.Duration) *Handler {
+	return &Handler{svc: svc, store: store, maxDecompressedBytes: maxDecompressedBytes, resolveTimeout: resolveTimeout}
 }
 
 // HandleResolve обрабатывает маршрут через pipeline очистки.

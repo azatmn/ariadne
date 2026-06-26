@@ -13,6 +13,7 @@ const (
 	CodeInvalidRouteFormat = "INVALID_ROUTE_FORMAT"
 	CodeRouteTooLarge      = "ROUTE_TOO_LARGE"
 	CodeUnprocessableRoute = "UNPROCESSABLE_ROUTE"
+	CodeNotFound           = "NOT_FOUND"
 	CodeInternal           = "INTERNAL"
 )
 
@@ -40,6 +41,7 @@ var codeToStatus = map[string]int{
 	CodeInvalidRouteFormat: http.StatusBadRequest,
 	CodeRouteTooLarge:      http.StatusRequestEntityTooLarge,
 	CodeUnprocessableRoute: http.StatusUnprocessableEntity,
+	CodeNotFound:           http.StatusNotFound,
 	CodeInternal:           http.StatusInternalServerError,
 }
 

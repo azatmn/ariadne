@@ -18,6 +18,7 @@ import (
 	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
 	"ariadne/internal/taskstore"
+	"ariadne/internal/worker"
 )
 
 // @title Ariadne API
@@ -41,7 +42,7 @@ func main() {
 
 	// Redis — хранилище задач и результатов. Соединение ленивое, поэтому
 	// сразу проверяем связь: если Redis недоступен, стартовать нет смысла.
-	store := taskstore.New(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword)
+	store := taskstore.New(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword, cfg.ResultTTL)
 	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := store.Ping(pingCtx); err != nil {
 		pingCancel()
@@ -58,8 +59,16 @@ func main() {
 
 	svc := service.New(cfg)
 
+	// Воркер-пул: N горутин разбирают очередь задач из Redis и пишут результат
+	// обратно в карточку. workerCtx отменяем отдельно — при выключении сначала
+	// гасим воркеров, потом ждём, пока допишут текущие задачи.
+	pool := worker.New(store, svc, logger, cfg.WorkerCount, cfg.ResolveTimeout, cfg.MaxDecompressedBytes)
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	pool.Start(workerCtx)
+	logger.Info("worker pool started", "workers", cfg.WorkerCount)
+
 	// HTTP
-	httpHandler := api.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	httpHandler := api.NewHandler(svc, store, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes, cfg.SwaggerEnabled)
 
 	httpSrv := &http.Server{
@@ -111,8 +120,18 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	// Гасим воркеров: перестают забирать новые задачи из очереди.
+	// pool.Shutdown ниже дождётся, пока допишут уже взятые.
+	cancelWorkers()
+
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		pool.Shutdown(ctx)
+		logger.Info("worker pool stopped")
+	}()
 
 	go func() {
 		defer wg.Done()
