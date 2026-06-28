@@ -41,6 +41,11 @@ type Config struct {
 	WorkerCount   int
 	ResultTTL     time.Duration
 
+	// Callback (Go → Laravel по готовности задачи)
+	CallbackURL     string // шаблон с плейсхолдером {taskKey}; пустой → коллбэки выключены
+	CallbackRetries int
+	CallbackTimeout time.Duration
+
 	UseOSRM bool
 	OSRMURL string
 
@@ -88,6 +93,11 @@ func Load() (*Config, error) {
 		RedisPassword: envStr("REDIS_PASSWORD", ""),
 		WorkerCount:   envInt("WORKER_COUNT", 4),
 		ResultTTL:     envDuration("RESULT_TTL", time.Hour),
+
+		// Callback (Go → Laravel)
+		CallbackURL:     envStr("CALLBACK_URL", ""),
+		CallbackRetries: envInt("CALLBACK_RETRIES", 3),
+		CallbackTimeout: envDuration("CALLBACK_TIMEOUT", 5*time.Second),
 
 		// Swagger
 		SwaggerEnabled: envBool("SWAGGER_ENABLED", false),

@@ -14,6 +14,7 @@ import (
 	_ "ariadne/swagger"
 
 	"ariadne/internal/api"
+	"ariadne/internal/callback"
 	"ariadne/internal/config"
 	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
@@ -59,10 +60,17 @@ func main() {
 
 	svc := service.New(cfg)
 
+	// Callback-клиент: уведомляет Laravel по готовности задачи. Пустой
+	// CALLBACK_URL → коллбэки выключены (no-op).
+	notifier := callback.New(cfg.CallbackURL, cfg.CallbackRetries, cfg.CallbackTimeout, logger)
+	if cfg.CallbackURL == "" {
+		logger.Warn("CALLBACK_URL is empty, callbacks disabled")
+	}
+
 	// Воркер-пул: N горутин разбирают очередь задач из Redis и пишут результат
 	// обратно в карточку. workerCtx отменяем отдельно — при выключении сначала
 	// гасим воркеров, потом ждём, пока допишут текущие задачи.
-	pool := worker.New(store, svc, logger, cfg.WorkerCount, cfg.ResolveTimeout, cfg.MaxDecompressedBytes)
+	pool := worker.New(store, svc, notifier, logger, cfg.WorkerCount, cfg.ResolveTimeout, cfg.MaxDecompressedBytes)
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 	pool.Start(workerCtx)
 	logger.Info("worker pool started", "workers", cfg.WorkerCount)

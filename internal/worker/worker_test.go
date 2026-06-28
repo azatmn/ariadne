@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,36 @@ import (
 	"ariadne/internal/service"
 	"ariadne/internal/taskstore"
 )
+
+// --- фейковые notifier'ы ---
+
+type noopNotifier struct{}
+
+func (noopNotifier) Notify(context.Context, string, string) error { return nil }
+
+type notifyCall struct{ taskKey, status string }
+
+// recordingNotifier запоминает вызовы Notify; err — что вернуть.
+type recordingNotifier struct {
+	mu    sync.Mutex
+	calls []notifyCall
+	err   error
+}
+
+func (r *recordingNotifier) Notify(_ context.Context, taskKey, status string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, notifyCall{taskKey, status})
+	return r.err
+}
+
+func (r *recordingNotifier) snapshot() []notifyCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]notifyCall, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
 
 // --- фейковый resolver: управляемая задержка / ошибка / паника ---
 
@@ -75,8 +106,13 @@ func newTestStore(t *testing.T) *taskstore.Store {
 
 func newPool(t *testing.T, store *taskstore.Store, r resolver, taskTimeout time.Duration) *Pool {
 	t.Helper()
+	return newPoolN(t, store, r, noopNotifier{}, taskTimeout)
+}
+
+func newPoolN(t *testing.T, store *taskstore.Store, r resolver, n notifier, taskTimeout time.Duration) *Pool {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(store, r, logger, 1, taskTimeout, 20<<20)
+	return New(store, r, n, logger, 1, taskTimeout, 20<<20)
 }
 
 // validInput — корректный сжатый маршрут (несколько точек, переживут чистку).
@@ -229,4 +265,61 @@ func TestPool_ProcessesQueuedTask(t *testing.T) {
 	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shCancel()
 	pool.Shutdown(shCtx)
+}
+
+// --- коллбэк ---
+
+// done → коллбэк дёрнут ровно один раз со статусом done.
+func TestProcess_NotifiesOnDone(t *testing.T) {
+	store := newTestStore(t)
+	rec := &recordingNotifier{}
+	pool := newPoolN(t, store, service.New(testConfig()), rec, 10*time.Second)
+	saveTask(t, store, "n1", validInput(t))
+
+	pool.process("n1")
+
+	calls := rec.snapshot()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "n1", calls[0].taskKey)
+	assert.Equal(t, "done", calls[0].status)
+}
+
+// failed → коллбэк тоже дёрнут, со статусом failed.
+func TestProcess_NotifiesOnFailed(t *testing.T) {
+	store := newTestStore(t)
+	rec := &recordingNotifier{}
+	pool := newPoolN(t, store, fakeResolver{err: errors.New("boom")}, rec, 10*time.Second)
+	saveTask(t, store, "n2", validInput(t))
+
+	pool.process("n2")
+
+	calls := rec.snapshot()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "n2", calls[0].taskKey)
+	assert.Equal(t, "failed", calls[0].status)
+}
+
+// коллбэк упал — задача всё равно done, воркер не падает (ошибку только логируем).
+func TestProcess_NotifyErrorDoesNotBreak(t *testing.T) {
+	store := newTestStore(t)
+	rec := &recordingNotifier{err: errors.New("laravel down")}
+	pool := newPoolN(t, store, service.New(testConfig()), rec, 10*time.Second)
+	saveTask(t, store, "n3", validInput(t))
+
+	assert.NotPanics(t, func() { pool.process("n3") })
+
+	got, err := store.Get(context.Background(), "n3")
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusDone, got.Status)
+}
+
+// карточки нет (Get → ошибка) → коллбэк НЕ шлём (нечего сообщать).
+func TestProcess_NoNotifyWhenTaskMissing(t *testing.T) {
+	store := newTestStore(t)
+	rec := &recordingNotifier{}
+	pool := newPoolN(t, store, service.New(testConfig()), rec, 10*time.Second)
+
+	pool.process("ghost")
+
+	assert.Empty(t, rec.snapshot(), "коллбэка по несуществующей задаче быть не должно")
 }

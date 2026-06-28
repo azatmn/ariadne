@@ -24,10 +24,17 @@ type resolver interface {
 	Resolve(ctx context.Context, points []geo.Point) (*service.Result, error)
 }
 
+// notifier уведомляет внешнюю систему о завершении задачи (Laravel-коллбэк).
+// В проде это *callback.Client; в тестах — фейк.
+type notifier interface {
+	Notify(ctx context.Context, taskKey, status string) error
+}
+
 // Pool — пул воркеров.
 type Pool struct {
 	store                *taskstore.Store
 	svc                  resolver
+	notify               notifier
 	logger               *slog.Logger
 	workers              int
 	timeout              time.Duration // таймаут на обработку одной задачи
@@ -37,10 +44,11 @@ type Pool struct {
 }
 
 // New собирает пул. Реально воркеры стартуют в Start.
-func New(store *taskstore.Store, svc resolver, logger *slog.Logger, workers int, timeout time.Duration, maxDecompressedBytes int64) *Pool {
+func New(store *taskstore.Store, svc resolver, notify notifier, logger *slog.Logger, workers int, timeout time.Duration, maxDecompressedBytes int64) *Pool {
 	return &Pool{
 		store:                store,
 		svc:                  svc,
+		notify:               notify,
 		logger:               logger,
 		workers:              workers,
 		timeout:              timeout,
@@ -99,6 +107,10 @@ func (p *Pool) worker(ctx context.Context) {
 // обработки задачи. var (а не const), чтобы тесты могли занижать его.
 var ioTimeout = 5 * time.Second
 
+// notifyTimeout — общий бюджет на коллбэк (с учётом ретраев), чтобы залипший
+// Laravel не держал воркер бесконечно. var — чтобы тесты могли занижать.
+var notifyTimeout = 30 * time.Second
+
 // process обрабатывает одну задачу. КАЖДЫЙ контекст создаётся НЕПОСРЕДСТВЕННО
 // перед своей операцией, чтобы его таймер не «тикал» во время чужих операций:
 //
@@ -141,6 +153,16 @@ func (p *Pool) process(taskKey string) {
 	defer writeCancel()
 	if err := p.store.Update(writeCtx, card); err != nil {
 		p.logger.Error("update task failed", "taskKey", taskKey, "error", err)
+		return // результат не сохранён — Laravel не уведомляем
+	}
+
+	// Уведомляем Laravel. Свой ctx из Background — коллбэк добиваем независимо
+	// от shutdown. Ошибку только логируем: задача уже сохранена, статус заберут
+	// и опросом GET /v1/tasks/{taskKey}.
+	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), notifyTimeout)
+	defer notifyCancel()
+	if err := p.notify.Notify(notifyCtx, card.Key, string(card.Status)); err != nil {
+		p.logger.Warn("callback failed", "taskKey", card.Key, "status", card.Status, "error", err)
 	}
 }
 
