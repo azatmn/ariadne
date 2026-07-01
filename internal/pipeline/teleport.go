@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"ariadne/internal/geo"
@@ -30,8 +29,6 @@ func (f RemoveTeleports) Apply(_ context.Context, points []geo.Point) ([]geo.Poi
 	}
 
 	result := []geo.Point{points[0]}
-	var warnings []string
-	removed := 0
 
 	// i — индекс последней ПРИНЯТОЙ точки в исходном массиве.
 	i := 0
@@ -47,7 +44,6 @@ func (f RemoveTeleports) Apply(_ context.Context, points []geo.Point) ([]geo.Poi
 			}
 			if ret != -1 && spanMeters(points[i+1:ret]) < f.MaxSpanMeters {
 				// Загон компактный (спуфинг-кластер) — вырезаем, продолжаем с точки возврата.
-				removed += ret - (i + 1)
 				result = append(result, points[ret])
 				i = ret
 				continue
@@ -59,10 +55,7 @@ func (f RemoveTeleports) Apply(_ context.Context, points []geo.Point) ([]geo.Poi
 		i++
 	}
 
-	if removed > 0 {
-		warnings = append(warnings, fmt.Sprintf("teleport: removed %d points", removed))
-	}
-	return result, warnings, nil
+	return result, nil, nil
 }
 
 // spanMeters — размах набора точек (диагональ ограничивающего прямоугольника).

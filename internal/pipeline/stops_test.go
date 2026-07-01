@@ -35,11 +35,10 @@ func TestCollapseStops_CollapsesStop(t *testing.T) {
 		pt(55.0001, 37.0199), pt(55.0000, 37.0202), pt(55.0002, 37.0201), // стоянка: 6 точек
 		pt(55.00, 37.03), pt(55.00, 37.04), // уезд
 	}
-	got, warns, err := stops.Apply(context.Background(), in)
+	got, _, err := stops.Apply(context.Background(), in)
 	require.NoError(t, err)
 	// стоянка (6 точек) свёрнута в 1: было 10 -> стало 5.
 	assert.Len(t, got, 5)
-	assert.NotEmpty(t, warns, "сворачивание стоянки даёт warning")
 }
 
 func TestCollapseStops_KeepsPassThrough(t *testing.T) {

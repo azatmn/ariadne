@@ -22,10 +22,9 @@ func ll(lat, lon float64) geo.Point { return geo.Point{Lat: lat, Lon: lon} }
 func TestAnchor_MonotonicKept(t *testing.T) {
 	in := []geo.Point{ll(0, 0), ll(0, 0.02), ll(0, 0.04), ll(0, 0.06), ll(0, 0.08), ll(0, 0.1)}
 
-	out, warns, err := RemoveAnchorBacktrack{ToleranceMeters: 500}.Apply(anchorCtx, in)
+	out, _, err := RemoveAnchorBacktrack{ToleranceMeters: 500}.Apply(anchorCtx, in)
 	require.NoError(t, err)
 	assert.Equal(t, in, out)
-	assert.Empty(t, warns)
 }
 
 // откат: точка дёрнулась НАЗАД к старту И ОТ цели (оба > порога) → вырезаем.
@@ -34,10 +33,9 @@ func TestAnchor_RemovesBacktrack(t *testing.T) {
 	target := ll(0, 0.1)
 	in := []geo.Point{start, ll(0, 0.04), ll(0, 0.01), ll(0, 0.06), target} // 0.01 — откат после 0.04
 
-	out, warns, err := RemoveAnchorBacktrack{ToleranceMeters: 500}.Apply(anchorCtx, in)
+	out, _, err := RemoveAnchorBacktrack{ToleranceMeters: 500}.Apply(anchorCtx, in)
 	require.NoError(t, err)
 	assert.Equal(t, []geo.Point{start, ll(0, 0.04), ll(0, 0.06), target}, out)
-	assert.NotEmpty(t, warns)
 }
 
 // КЛЮЧЕВОЙ для способа 2: нарушено только ОДНО условие (ушла от цели, но НЕ
@@ -108,10 +106,9 @@ func TestAnchor_AlwaysKeepsAnchors(t *testing.T) {
 func TestAnchor_Disabled(t *testing.T) {
 	in := []geo.Point{ll(0, 0), ll(0, 0.08), ll(0, 0.001), ll(0, 0.1)}
 	for _, tol := range []float64{0, -1} {
-		out, warns, err := RemoveAnchorBacktrack{ToleranceMeters: tol}.Apply(anchorCtx, in)
+		out, _, err := RemoveAnchorBacktrack{ToleranceMeters: tol}.Apply(anchorCtx, in)
 		require.NoError(t, err)
 		assert.Equal(t, in, out, "при tol=%v стадия — no-op", tol)
-		assert.Empty(t, warns)
 	}
 }
 

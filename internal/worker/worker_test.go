@@ -89,10 +89,7 @@ func testConfig() *config.Config {
 		TeleportMaxSpanMeters: 5000,
 		StopRadiusMeters:      50,
 		StopMinPoints:         5,
-		MaxLoopMeters:         100,
-		MaxLoopSeconds:        10,
 		SimplifyMinMeters:     5.0,
-		IntersectMaxIter:      10000,
 	}
 }
 

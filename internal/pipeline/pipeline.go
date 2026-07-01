@@ -23,7 +23,6 @@ type Params struct {
 	DedupDistanceMeters   float64
 	DedupTimeGap          time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
 	SimplifyMinMeters     float64
-	IntersectMaxIter      int
 	MaxSpeedKmh           float64
 	MaxAccelKmhPerSec     float64
 	TeleportJumpMeters    float64 // скачок больше этого = подозрение на телепорт-загон
@@ -31,13 +30,11 @@ type Params struct {
 	TeleportMaxSpanMeters float64 // вырезаем загон только если его размах меньше этого
 	StopRadiusMeters      float64 // размер пятна стоянки для сворачивания
 	StopMinPoints         int     // от скольких точек в пятне считаем стоянкой
-	MaxLoopMeters         float64 // эвристика: петли больше этого периметра не трогаем (реальные развязки)
-	MaxLoopSeconds        float64 // эвристика: петли длиннее по времени не трогаем
 	AnchorToleranceMeters float64 // порог отката для якорного фильтра; 0 = выключено
 }
 
 type StageStats struct {
-	Name         string `json:"name" example:"RemoveSelfIntersections"`
+	Name         string `json:"name" example:"collapse_stops"`
 	PointsBefore int    `json:"pointsBefore" example:"3016"`
 	PointsAfter  int    `json:"pointsAfter" example:"2981"`
 	Elapsed      string `json:"elapsed" example:"47.123ms"`

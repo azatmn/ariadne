@@ -23,10 +23,7 @@ type Config struct {
 	DedupTimeGap          time.Duration
 	SimplifyMinMeters     float64
 	MaxPoints             int
-	IntersectMaxIter      int
 	MaxSpeedKmh           float64
-	MaxLoopMeters         float64
-	MaxLoopSeconds        float64
 	MaxAccelKmhPerSec     float64
 	TeleportJumpMeters    float64
 	TeleportReturnMeters  float64
@@ -74,17 +71,14 @@ func Load() (*Config, error) {
 		DedupDistanceMeters:   envFloat("DEDUP_DISTANCE_METERS", 2.0),
 		DedupTimeGap:          envDuration("DEDUP_TIME_GAP", 60*time.Second),
 		MaxSpeedKmh:           envFloat("MAX_SPEED_KMH", 150),
-		MaxLoopMeters:         envFloat("MAX_LOOP_METERS", 100),
-		MaxLoopSeconds:        envFloat("MAX_LOOP_SECONDS", 10),
 		MaxAccelKmhPerSec:     envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
 		TeleportJumpMeters:    envFloat("TELEPORT_JUMP_METERS", 15000),
 		TeleportReturnMeters:  envFloat("TELEPORT_RETURN_METERS", 2000),
 		TeleportMaxSpanMeters: envFloat("TELEPORT_MAX_SPAN_METERS", 5000),
 		StopRadiusMeters:      envFloat("STOP_RADIUS_METERS", 50),
 		StopMinPoints:         envInt("STOP_MIN_POINTS", 5),
-		IntersectMaxIter:      envInt("INTERSECT_MAX_ITER", 10_000),
 		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
-		AnchorToleranceMeters: envFloat("ANCHOR_BACKTRACK_TOLERANCE_METERS", 100), // 0 = якорный фильтр выключен
+		AnchorToleranceMeters: envFloat("ANCHOR_BACKTRACK_TOLERANCE_METERS", 0), // 0 = якорный фильтр выключен
 
 		// Redis (async: очередь + хранилище результатов)
 		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),

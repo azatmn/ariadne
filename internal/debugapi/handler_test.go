@@ -25,7 +25,6 @@ func testConfig() *config.Config {
 		DedupTimeGap:          60 * time.Second,
 		SimplifyMinMeters:     2.0,
 		MaxPoints:             50000,
-		IntersectMaxIter:      100,
 		MaxSpeedKmh:           150,
 		MaxAccelKmhPerSec:     30,
 		TeleportJumpMeters:    15000,
@@ -33,8 +32,6 @@ func testConfig() *config.Config {
 		TeleportMaxSpanMeters: 5000,
 		StopRadiusMeters:      50,
 		StopMinPoints:         5,
-		MaxLoopMeters:         100,
-		MaxLoopSeconds:        10,
 		MaxBodyBytes:          10 << 20,
 		MaxDecompressedBytes:  100 << 20,
 		ResolveTimeout:        25 * time.Second,
@@ -62,22 +59,6 @@ func testRoute(t *testing.T) string {
 		{Time: t0.Add(10 * time.Second), Lon: 37.617400, Lat: 55.755900},
 		{Time: t0.Add(20 * time.Second), Lon: 37.617500, Lat: 55.756000},
 		{Time: t0.Add(30 * time.Second), Lon: 37.617600, Lat: 55.756100},
-	}
-	encoded, err := codec.Encode(points)
-	require.NoError(t, err)
-	return encoded
-}
-
-// testRouteWithTeleport — трек со спуфинг-загоном: скачок далеко и возврат.
-func testRouteWithTeleport(t *testing.T) string {
-	t.Helper()
-	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
-	points := []geo.Point{
-		{Time: t0.Add(0 * time.Second), Lon: 37.6170, Lat: 55.7550},
-		{Time: t0.Add(1 * time.Second), Lon: 37.6180, Lat: 55.7550},
-		{Time: t0.Add(2 * time.Second), Lon: 50.0000, Lat: 60.0000}, // телепорт
-		{Time: t0.Add(3 * time.Second), Lon: 37.6185, Lat: 55.7550}, // возврат
-		{Time: t0.Add(4 * time.Second), Lon: 37.6190, Lat: 55.7550},
 	}
 	encoded, err := codec.Encode(points)
 	require.NoError(t, err)
@@ -149,19 +130,6 @@ func TestHandlerTooManyPoints(t *testing.T) {
 	var payload api.ErrorPayload
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&payload))
 	assert.Equal(t, api.CodeRouteTooLarge, payload.Error.Code)
-}
-
-func TestHandlerWarningsInResponse(t *testing.T) {
-	handler := testHandler()
-	body := `{"routeCompressed":"` + testRouteWithTeleport(t) + `"}`
-	r := httptest.NewRequest(http.MethodPost, "/v1/routes/resolve-collisions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	handler(w, r)
-
-	require.Equal(t, http.StatusOK, w.Code, "response body: %s", w.Body.String())
-	var resp ResolveResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotEmpty(t, resp.Warnings, "expected warning from remove_teleports")
 }
 
 func TestHandlerNoWarningsWhenClean(t *testing.T) {

@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 
 	"ariadne/internal/geo"
 )
@@ -39,14 +38,12 @@ func (f RemoveAnchorBacktrack) Apply(_ context.Context, points []geo.Point) ([]g
 	result = append(result, start) // якорь-старт
 
 	prev := start // предыдущая ОСТАВЛЕННАЯ точка (опора для сравнения)
-	removed := 0
 	for i := 1; i < len(points)-1; i++ {
 		p := points[i]
 		towardStart := geo.Haversine(prev, start) - geo.Haversine(p, start)  // >0: ближе к старту, чем prev
 		awayTarget := geo.Haversine(p, target) - geo.Haversine(prev, target) // >0: дальше от цели, чем prev
 
 		if towardStart > f.ToleranceMeters && awayTarget > f.ToleranceMeters {
-			removed++
 			continue // откат по ОБЕИМ дистанциям больше порога → глюк
 		}
 		result = append(result, p)
@@ -54,9 +51,5 @@ func (f RemoveAnchorBacktrack) Apply(_ context.Context, points []geo.Point) ([]g
 	}
 	result = append(result, target) // якорь-цель
 
-	var warnings []string
-	if removed > 0 {
-		warnings = append(warnings, fmt.Sprintf("anchor: removed %d backtracking points", removed))
-	}
-	return result, warnings, nil
+	return result, nil, nil
 }

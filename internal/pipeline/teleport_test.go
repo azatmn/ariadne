@@ -52,13 +52,12 @@ func TestRemoveTeleports_RemovesSpoofingLoop(t *testing.T) {
 		pt(55.0, 37.025),                 // возврат ~320 м к anchor
 		pt(55.0, 37.03), pt(55.0, 37.04), // продолжение
 	}
-	got, warns, err := teleport.Apply(context.Background(), in)
+	got, _, err := teleport.Apply(context.Background(), in)
 	require.NoError(t, err)
 	// 3 точки загона (телепорт + 2 кластера) вырезаны: было 9 -> стало 6.
 	assert.Len(t, got, 6)
 	// Ни одной улетевшей точки (lat ~55.5) не осталось.
 	assert.Less(t, maxLat(got), 55.1, "точки телепорта должны быть удалены")
-	assert.NotEmpty(t, warns, "вырезание загона должно дать warning")
 }
 
 func TestRemoveTeleports_KeepsLargeSpanTrip(t *testing.T) {

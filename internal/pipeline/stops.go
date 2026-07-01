@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 
 	"ariadne/internal/geo"
 )
@@ -27,8 +26,6 @@ func (f CollapseStops) Apply(_ context.Context, points []geo.Point) ([]geo.Point
 	}
 
 	result := make([]geo.Point, 0, len(points))
-	var warnings []string
-	collapsed := 0
 
 	i := 0
 	for i < len(points) {
@@ -40,15 +37,11 @@ func (f CollapseStops) Apply(_ context.Context, points []geo.Point) ([]geo.Point
 		result = append(result, points[i]) // одна точка от группы
 		if j-i >= f.MinPoints {
 			// Стоянка: сворачиваем группу в одну точку, продолжаем с точки выхода.
-			collapsed += (j - i) - 1
 			i = j
 		} else {
 			i++
 		}
 	}
 
-	if collapsed > 0 {
-		warnings = append(warnings, fmt.Sprintf("stops: collapsed %d points", collapsed))
-	}
-	return result, warnings, nil
+	return result, nil, nil
 }

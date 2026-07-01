@@ -29,7 +29,6 @@ func testConfig() *config.Config {
 		DedupTimeGap:          60 * time.Second,
 		SimplifyMinMeters:     2.0,
 		MaxPoints:             50000,
-		IntersectMaxIter:      100,
 		MaxSpeedKmh:           150,
 		MaxAccelKmhPerSec:     30,
 		TeleportJumpMeters:    15000,
@@ -37,8 +36,6 @@ func testConfig() *config.Config {
 		TeleportMaxSpanMeters: 5000,
 		StopRadiusMeters:      50,
 		StopMinPoints:         5,
-		MaxLoopMeters:         100,
-		MaxLoopSeconds:        10,
 		MaxDecompressedBytes:  100 << 20,
 		ResolveTimeout:        25 * time.Second,
 	}

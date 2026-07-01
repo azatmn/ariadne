@@ -65,7 +65,6 @@ func (s *Service) buildParams() pipeline.Params {
 	return pipeline.Params{
 		DedupDistanceMeters:   s.cfg.DedupDistanceMeters,
 		DedupTimeGap:          s.cfg.DedupTimeGap,
-		IntersectMaxIter:      s.cfg.IntersectMaxIter,
 		MaxSpeedKmh:           s.cfg.MaxSpeedKmh,
 		MaxAccelKmhPerSec:     s.cfg.MaxAccelKmhPerSec,
 		TeleportJumpMeters:    s.cfg.TeleportJumpMeters,
@@ -73,8 +72,6 @@ func (s *Service) buildParams() pipeline.Params {
 		TeleportMaxSpanMeters: s.cfg.TeleportMaxSpanMeters,
 		StopRadiusMeters:      s.cfg.StopRadiusMeters,
 		StopMinPoints:         s.cfg.StopMinPoints,
-		MaxLoopMeters:         s.cfg.MaxLoopMeters,
-		MaxLoopSeconds:        s.cfg.MaxLoopSeconds,
 		SimplifyMinMeters:     s.cfg.SimplifyMinMeters,
 		AnchorToleranceMeters: s.cfg.AnchorToleranceMeters,
 	}
