@@ -17,13 +17,14 @@ const (
 	CodeInternal           = "INTERNAL"
 )
 
-// ErrorPayload — формат ошибки в JSON-ответе.
+// ErrorPayload — формат ошибки в JSON-ответе. requestId — в заголовке
+// X-Request-ID, не в теле. details зарезервировано под будущий машиночитаемый
+// контекст (напр. поле валидации), сейчас не заполняется (omitempty → отсутствует).
 //
 //	{
 //	  "error": {
 //	    "code": "INVALID_REQUEST",
-//	    "message": "...",
-//	    "details": { "requestId": "...", "meta": "..." }
+//	    "message": "..."
 //	  }
 //	}
 type ErrorPayload struct {
@@ -64,15 +65,14 @@ func WriteError(w http.ResponseWriter, r *http.Request, code, message string) {
 		status = http.StatusInternalServerError
 	}
 
+	// requestId в тело НЕ кладём — он и так в заголовке X-Request-ID
+	// (единообразно с gRPC, где id только в метаданных). details оставлено
+	// на будущее (например, поле валидации), сейчас не заполняется.
 	payload := ErrorPayload{
 		Error: ErrorBody{
 			Code:    code,
 			Message: message,
 		},
-	}
-
-	if requestID := w.Header().Get("X-Request-ID"); requestID != "" {
-		payload.Error.Details = map[string]any{"requestId": requestID}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
