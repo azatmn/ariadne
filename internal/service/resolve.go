@@ -76,5 +76,6 @@ func (s *Service) buildParams() pipeline.Params {
 		MaxLoopMeters:         s.cfg.MaxLoopMeters,
 		MaxLoopSeconds:        s.cfg.MaxLoopSeconds,
 		SimplifyMinMeters:     s.cfg.SimplifyMinMeters,
+		AnchorToleranceMeters: s.cfg.AnchorToleranceMeters,
 	}
 }

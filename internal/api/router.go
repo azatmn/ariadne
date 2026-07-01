@@ -21,10 +21,7 @@ func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64, swaggerEnabl
 	r.Get("/healthz", Healthz)
 	r.Get("/readyz", Readyz)
 
-	// Синхронный (под снос, на нём держится фронт-отладчик).
-	r.Post("/v1/routes/resolve-collisions", errMw(h.HandleResolve))
-
-	// Асинхронные задачи.
+	// Асинхронные задачи (синхронная чистка вынесена в cmd/debugserver).
 	r.Post("/v1/tasks", errMw(h.HandleSubmit))
 	r.Get("/v1/tasks/{taskKey}", errMw(h.HandleStatus))
 	r.Get("/v1/tasks/{taskKey}/debug", errMw(h.HandleDebug))

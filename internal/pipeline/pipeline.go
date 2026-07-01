@@ -33,7 +33,7 @@ type Params struct {
 	StopMinPoints         int     // от скольких точек в пятне считаем стоянкой
 	MaxLoopMeters         float64 // эвристика: петли больше этого периметра не трогаем (реальные развязки)
 	MaxLoopSeconds        float64 // эвристика: петли длиннее по времени не трогаем
-	// UseOSRM bool
+	AnchorToleranceMeters float64 // порог отката для якорного фильтра; 0 = выключено
 }
 
 type StageStats struct {
@@ -51,15 +51,14 @@ type Pipeline struct {
 // New собирает pipeline под заданные параметры.
 // Порядок (MVP):
 //
-//	SortByTime → FilterBySpeed → FilterByAcceleration → Deduplicate → RemoveSelfIntersections → Simplify
+//	SortByTime → RemoveAnchorBacktrack → RemoveTeleports → FilterBySpeed → FilterByAcceleration → Deduplicate → CollapseStops → Simplify
 //
-// Speed ДО dedup: иначе склейка близких точек растворяет Δt вокруг телепорта,
-// и фильтр скорости пропустит выброс. Подробнее — Decisions.md.
-//
-// Пост-MVP: добавится OSRMMatch перед/после Intersections (решить при интеграции).
+// RemoveAnchorBacktrack сразу после сортировки: якоря = крайние точки по времени,
+// режем «откаты» (точка дёрнулась назад к старту и от цели) до локальных фильтров.
 func New(p Params) *Pipeline {
 	stages := []Stage{
 		SortByTime{},
+		RemoveAnchorBacktrack{ToleranceMeters: p.AnchorToleranceMeters},
 		RemoveTeleports{JumpMeters: p.TeleportJumpMeters, ReturnMeters: p.TeleportReturnMeters, MaxSpanMeters: p.TeleportMaxSpanMeters},
 		FilterBySpeed{MaxKmh: p.MaxSpeedKmh},
 		FilterByAcceleration{MaxAccelKmhPerSec: p.MaxAccelKmhPerSec},

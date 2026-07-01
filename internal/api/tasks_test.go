@@ -32,9 +32,7 @@ func taskEnv(t *testing.T) (http.Handler, *taskstore.Store, *miniredis.Miniredis
 	t.Cleanup(mr.Close)
 
 	store := taskstore.New(mr.Addr(), 0, "", time.Hour)
-	// svc=nil: async-методы его не трогают. Если тронут — тест упадёт паникой,
-	// и это правильно (значит, метод лезет не туда).
-	h := NewHandler(nil, store, 20<<20, time.Second)
+	h := NewHandler(store)
 
 	errMw := ErrorMiddleware(testLogger())
 	r := chi.NewRouter()

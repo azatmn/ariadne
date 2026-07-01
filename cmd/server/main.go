@@ -76,7 +76,7 @@ func main() {
 	logger.Info("worker pool started", "workers", cfg.WorkerCount)
 
 	// HTTP
-	httpHandler := api.NewHandler(svc, store, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	httpHandler := api.NewHandler(store)
 	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes, cfg.SwaggerEnabled)
 
 	httpSrv := &http.Server{

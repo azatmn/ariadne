@@ -33,6 +33,7 @@ type Config struct {
 	TeleportMaxSpanMeters float64
 	StopRadiusMeters      float64
 	StopMinPoints         int
+	AnchorToleranceMeters float64
 
 	// Redis (async: очередь задач + хранилище результатов)
 	RedisAddr     string
@@ -45,9 +46,6 @@ type Config struct {
 	CallbackURL     string // шаблон с плейсхолдером {taskKey}; пустой → коллбэки выключены
 	CallbackRetries int
 	CallbackTimeout time.Duration
-
-	UseOSRM bool
-	OSRMURL string
 
 	SwaggerEnabled bool
 	GRPCReflection bool
@@ -86,6 +84,7 @@ func Load() (*Config, error) {
 		StopMinPoints:         envInt("STOP_MIN_POINTS", 5),
 		IntersectMaxIter:      envInt("INTERSECT_MAX_ITER", 10_000),
 		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
+		AnchorToleranceMeters: envFloat("ANCHOR_BACKTRACK_TOLERANCE_METERS", 100), // 0 = якорный фильтр выключен
 
 		// Redis (async: очередь + хранилище результатов)
 		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),
