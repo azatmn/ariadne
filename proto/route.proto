@@ -4,23 +4,45 @@ package ariadne.v1;
 
 option go_package = "ariadne/internal/gen/ariadne;ariadnepb";
 
+// RouteService — асинхронная обработка маршрутов: сдать задачу → опрашивать по
+// taskKey. Синхронный ResolveCollisions убран (потребителя на gRPC не было).
 service RouteService {
-  rpc ResolveCollisions(ResolveCollisionsRequest) returns (ResolveCollisionsResponse);
+  // SubmitTask принимает сжатый маршрут, ставит задачу в очередь, отдаёт taskKey.
+  rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+  // GetTask отдаёт статус и — при done — очищенный маршрут с длиной.
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  // GetTaskDebug отдаёт разбор по стадиям pipeline.
+  rpc GetTaskDebug(GetTaskDebugRequest) returns (GetTaskDebugResponse);
 }
 
-message ResolveCollisionsRequest {
+message SubmitTaskRequest {
   string route_compressed = 1;
-  bool return_debug = 2;
 }
 
-message ResolveCollisionsResponse {
-  string route_compressed = 1;
-  double length_meters = 2;
-  double length_before_meters = 3;
-  int32 points_count = 4;
-  int32 removed_points_count = 5;
-  repeated string warnings = 6;
-  repeated StageStats debug = 7;
+message SubmitTaskResponse {
+  string task_key = 1;
+}
+
+message GetTaskRequest {
+  string task_key = 1;
+}
+
+message GetTaskResponse {
+  string task_key = 1;
+  string status = 2;            // pending / done / failed
+  string route_compressed = 3;  // при done
+  double length_meters = 4;     // при done
+  string error = 5;             // при failed
+}
+
+message GetTaskDebugRequest {
+  string task_key = 1;
+}
+
+message GetTaskDebugResponse {
+  string task_key = 1;
+  string status = 2;
+  repeated StageStats debug = 3;
 }
 
 message StageStats {

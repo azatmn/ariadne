@@ -1,205 +1,210 @@
 # ariadne
 
-Stateless Go-микросервис для устранения коллизий GPS-маршрутов: принимает сжатый маршрут от backend, чистит дубликаты/пересечения/петли, возвращает исправленный маршрут и его длину в метрах.
+Go-микросервис для очистки GPS-маршрутов (устранение «коллизий»/глюков). Работает **асинхронно**: клиент сдаёт маршрут → получает `taskKey` → сервис чистит его в фоне → по готовности дёргает callback и/или клиент забирает результат по `taskKey`.
 
-## API
+Хранилище задач и результатов — **Redis** (логическая БД 10, TTL 1 час). Обработку ведёт пул воркеров (число из env). Два транспорта: **REST** и **gRPC**.
 
-### POST /v1/routes/resolve-collisions
+## Асинхронный поток
 
-Основной эндпоинт. Принимает маршрут, прогоняет через pipeline очистки, возвращает результат.
+```
+1. Клиент → POST /v1/tasks {routeCompressed}          → 202 {taskKey}
+2. Сервис: карточка задачи (pending) в Redis + в очередь
+3. Воркер: берёт из очереди → чистит → пишет результат (done) или ошибку (failed) в Redis
+4. Воркер → POST на CALLBACK_URL с taskKey            (готово; если CALLBACK_URL задан)
+5. Клиент → GET /v1/tasks/{taskKey}                    → статус + очищенный маршрут + длина
+             GET /v1/tasks/{taskKey}/debug             → разбор по стадиям
+```
+
+Все ключи задачи живут в Redis 1 час (`RESULT_TTL`), потом авто-удаление.
+
+## REST API
+
+### POST /v1/tasks — сдать задачу
+
+Мгновенно принимает маршрут в очередь. **Вход не декодится** (это работа воркера) — submit быстрый.
 
 **Запрос:**
-
 ```json
-{
-  "routeCompressed": "<base64(zlib(JSON))>",
-  "returnDebug": false
-}
+{ "routeCompressed": "<base64(zlib(JSON))>" }
 ```
 
-- `routeCompressed` (обязательное) — маршрут в сжатом формате (см. раздел ниже)
-- `returnDebug` (опциональное) — если `true`, в ответе появится поле `debug` со статистикой по каждому этапу pipeline
+**Ответ 202:**
+```json
+{ "taskKey": "a1b2c3d4-..." }
+```
+
+`taskKey` — UUID, уникальность гарантируется записью в Redis через `SET NX`.
+
+### GET /v1/tasks/{taskKey} — статус и результат
 
 **Ответ 200:**
-
 ```json
 {
+  "taskKey": "a1b2c3d4-...",
+  "status": "done",
   "routeCompressed": "<base64(zlib(JSON))>",
-  "lengthMeters": 1168113.85,
-  "pointsCount": 2981,
-  "removedPointsCount": 35,
-  "lengthBeforeMeters": 1170260.79,
-  "warnings": ["intersect: max iterations reached, route may still contain intersections"]
+  "lengthMeters": 1168113.85
 }
 ```
 
-- `routeCompressed` — очищенный маршрут в том же формате
-- `lengthMeters` — длина очищенного маршрута в метрах
-- `pointsCount` — количество точек после обработки
-- `removedPointsCount` — сколько точек удалено
-- `lengthBeforeMeters` — длина маршрута до обработки
-- `warnings` (опциональное) — предупреждения о неполной обработке (например, исчерпание итераций)
-- `debug` (опциональное) — статистика по каждому этапу pipeline (появляется при `returnDebug: true`)
+- `status` — `pending` (в очереди/считается) / `done` (готово) / `failed` (упало)
+- `routeCompressed` — только при `status: done` (очищенный маршрут в том же сжатом формате)
+- `lengthMeters` — длина очищенного маршрута в метрах; **присутствует всегда** (в `pending`/`failed` равна `0`), осмысленна при `done`. Поля без `omitempty`, чтобы клиент отличал длину `0` от отсутствия поля
+- `error` — только при `status: failed` (текст, почему упало: битый вход, слишком много точек, < 2 точек после чистки и т.п.)
+- `404 NOT_FOUND` — задачи с таким `taskKey` нет (не создавали или протухла по TTL)
 
-**Ошибки:**
+### GET /v1/tasks/{taskKey}/debug — разбор по стадиям
+
+**Ответ 200:**
+```json
+{
+  "taskKey": "a1b2c3d4-...",
+  "status": "done",
+  "debug": [
+    { "name": "sort_by_time", "pointsBefore": 3016, "pointsAfter": 3016, "elapsed": "1.2ms" },
+    { "name": "collapse_stops", "pointsBefore": 2329, "pointsAfter": 1946, "elapsed": "3.4ms" }
+  ]
+}
+```
+
+`debug` заполнен при `status: done` (статистика по каждой стадии pipeline). `404` — задачи нет.
+
+### Прочее
+
+- `GET /healthz` — liveness, `200 ok`.
+- `GET /readyz` — readiness, `503` при shutdown.
+- `GET /swagger/*` — Swagger UI (если `SWAGGER_ENABLED=true`).
+
+### Ошибки REST
 
 | Код | HTTP | Когда |
 |---|---|---|
-| `INVALID_REQUEST` | 400 | Невалидный JSON, пустой `routeCompressed`, или тело запроса > `MAX_BODY_BYTES` |
-| `INVALID_ROUTE_FORMAT` | 400 | Не удалось декодировать маршрут (битый base64/zlib/JSON) |
-| `ROUTE_TOO_LARGE` | 413 | Точек больше `MAX_POINTS` или распакованные данные > `MAX_DECOMPRESSED_BYTES` |
-| `UNPROCESSABLE_ROUTE` | 422 | После обработки осталось < 2 точек |
-| `INTERNAL` | 500 | Внутренняя ошибка |
+| `INVALID_REQUEST` | 400 | Невалидный JSON, пустой `routeCompressed`, тело > `MAX_BODY_BYTES` |
+| `NOT_FOUND` | 404 | Нет задачи с таким `taskKey` |
+| `INTERNAL` | 500 | Внутренняя ошибка (например, Redis недоступен) |
 
 Формат ошибки:
-
 ```json
-{
-  "error": {
-    "code": "INVALID_REQUEST",
-    "message": "routeCompressed is required"
-  }
+{ "error": { "code": "INVALID_REQUEST", "message": "routeCompressed is required" } }
+```
+
+`requestId` — в заголовке `X-Request-ID` (не в теле). Ошибки самой обработки маршрута (битый вход, слишком много/мало точек) НЕ приходят как HTTP-ошибка submit'а — они всплывают в `status: failed` + `error` при опросе.
+
+## gRPC API — `ariadne.v1.RouteService`
+
+```proto
+service RouteService {
+  rpc SubmitTask   (SubmitTaskRequest)    returns (SubmitTaskResponse);
+  rpc GetTask      (GetTaskRequest)        returns (GetTaskResponse);
+  rpc GetTaskDebug (GetTaskDebugRequest)   returns (GetTaskDebugResponse);
+}
+
+message SubmitTaskRequest  { string route_compressed = 1; }
+message SubmitTaskResponse { string task_key = 1; }
+
+message GetTaskRequest  { string task_key = 1; }
+message GetTaskResponse {
+  string task_key = 1;
+  string status = 2;             // pending / done / failed
+  string route_compressed = 3;   // при done
+  double length_meters = 4;      // при done
+  string error = 5;              // при failed
+}
+
+message GetTaskDebugRequest  { string task_key = 1; }
+message GetTaskDebugResponse {
+  string task_key = 1;
+  string status = 2;
+  repeated StageStats debug = 3;
 }
 ```
 
-### GET /swagger/*
+**Коды ошибок gRPC:**
 
-Swagger UI — интерактивная документация API. Доступна по адресу `/swagger/index.html`. Отключается через `SWAGGER_ENABLED=false`.
+| Код | Когда |
+|---|---|
+| `INVALID_ARGUMENT` | Пустой `route_compressed` или пустой `task_key` |
+| `NOT_FOUND` | Нет задачи с таким `task_key` |
+| `RESOURCE_EXHAUSTED` | Сообщение > `GRPC_MAX_RECV_MSG_SIZE` |
+| `INTERNAL` | Внутренняя ошибка (Redis и т.п.) |
 
-### GET /healthz
+`x-request-id` возвращается в response-метаданных (и при успехе, и при ошибке). Есть стандартный `grpc.health.v1.Health/Check`; server reflection — по `GRPC_REFLECTION`.
 
-Liveness probe. Возвращает `200 ok` пока процесс жив.
+## Callback (Go → Laravel)
 
-### GET /readyz
+Когда воркер закончил задачу (`done` ИЛИ `failed`), он дёргает внешнюю систему:
 
-Readiness probe. MVP: аналогичен `/healthz`. Пост-MVP: будет проверять доступность OSRM.
+- **Метод:** POST на `CALLBACK_URL` с подстановкой плейсхолдера `{taskKey}` (напр. `https://laravel/api/ariadne/{taskKey}`).
+- **Тело:** `{ "taskKey": "...", "status": "done|failed" }` (основной сигнал — `taskKey` в URL; по нему клиент идёт в `GET /v1/tasks/{taskKey}`).
+- **Ретраи:** на сетевую ошибку и 5xx — до `CALLBACK_RETRIES` раз с бэкоффом; на 4xx не повторяет.
+- **Выключение:** пустой `CALLBACK_URL` → коллбэки не шлются.
+
+> Тело/метод — разумные дефолты; при уточнении контракта от команды меняются в `internal/callback`.
 
 ## Формат routeCompressed
 
 Совместим с PHP-backend:
-
 ```
-Кодирование: json_encode(points) -> gzcompress(level=9) -> base64_encode
-Декодирование: base64_decode -> gzuncompress -> json_decode
+Кодирование:  json_encode(points) → gzcompress(level=9) → base64_encode
+Декодирование: base64_decode → gzuncompress → json_decode
 ```
-
-PHP `gzcompress()` — это **zlib** (заголовок `0x78 0xDA`), не gzip. В Go используется `compress/zlib`.
+PHP `gzcompress()` — это **zlib** (заголовок `0x78 0xDA`), не gzip. В Go — `compress/zlib`.
 
 Формат точки:
-
 ```json
 { "t": "2026-03-16T10:12:20+03:00", "pos": { "x": 37.617, "y": 55.755 } }
 ```
+- `t` — время (ISO 8601); `pos.x` — долгота; `pos.y` — широта.
+- Минимум 2 точки; приходить могут неотсортированными (сортируются внутри по `t`).
 
-- `t` — время (ISO 8601)
-- `pos.x` — долгота (longitude)
-- `pos.y` — широта (latitude)
-- Минимальный маршрут — 2 точки
-- Точки могут приходить неотсортированными — внутри сервиса сортируются по `t`
+## Pipeline очистки
 
-## Pipeline
-
-Маршрут проходит через цепочку этапов (Stage):
+Маршрут проходит цепочку независимых стадий (`pipeline.Stage`):
 
 ```
-routeCompressed
-  -> Decode (base64 -> zlib -> JSON -> []Point)
-  -> SortByTime
-  -> FilterBySpeed         удаляет GPS-телепорты (скорость > MAX_SPEED_KMH)
-  -> FilterByAcceleration  удаляет GPS-глюки с аномальным ускорением (> MAX_ACCEL_KMH_PER_SEC)
-  -> Deduplicate           склеивает точки ближе DEDUP_DISTANCE_METERS и DEDUP_TIME_GAP
-  -> RemoveSelfIntersections   убирает петли от GPS-глюков (с эвристиками, поддерживает context cancellation)
-  -> Simplify                  упрощение маршрута алгоритмом Дугласа-Пекера (SIMPLIFY_MIN_METERS)
-  -> Encode ([]Point -> JSON -> zlib -> base64)
-  -> TotalLength -> lengthMeters
+Decode → sort_by_time
+       → remove_anchor_backtrack   режет «откаты» относительно якорей (первая/последняя точка); 0 = выкл
+       → remove_teleports          вырезает спуфинг-загоны (телепорт в аэропорт + возврат)
+       → filter_by_speed           убирает точки со скоростью > MAX_SPEED_KMH
+       → filter_by_acceleration    убирает точки с ускорением > MAX_ACCEL_KMH_PER_SEC
+       → deduplicate               склеивает дубли (ближе DEDUP_DISTANCE_METERS И Δt < DEDUP_TIME_GAP)
+       → collapse_stops            сворачивает стоянки (кучи точек в радиусе) в одну
+       → simplify                  Дугласа-Пекер (SIMPLIFY_MIN_METERS)
+       → Encode → длина (TotalLength)
 ```
 
-Каждый этап — реализация интерфейса `pipeline.Stage`. Добавление нового этапа (OSRM, Simplify) = новая структура в цепочке, без правок в остальном коде.
-
-### Эвристики пересечений
-
-`RemoveSelfIntersections` не удаляет петлю если она превышает `MAX_LOOP_METERS` или `MAX_LOOP_SECONDS` — такие петли считаются реальными (развязки, серпантины, развороты). GPS-глюки почти всегда короткие по времени и маленькие по площади.
-
-## gRPC API
-
-Второй транспорт рядом с REST. Оба вызывают `service.Resolve`.
-
-### ariadne.v1.RouteService/ResolveCollisions
-
-```text
-message ResolveCollisionsRequest {
-  string route_compressed = 1;
-  bool return_debug = 2;
-}
-
-message ResolveCollisionsResponse {
-  string route_compressed = 1;
-  double length_meters = 2;
-  double length_before_meters = 3;
-  int32 points_count = 4;
-  int32 removed_points_count = 5;
-  repeated string warnings = 6;
-  repeated StageStats debug = 7;
-}
-```
-
-**Коды ошибок:**
-
-| gRPC код | Когда |
-|---|---|
-| `INVALID_ARGUMENT` | Пустой `route_compressed`, невалидный base64/zlib/JSON |
-| `RESOURCE_EXHAUSTED` | Точек > `MAX_POINTS`, распакованные данные > `MAX_DECOMPRESSED_BYTES`, сообщение > `GRPC_MAX_RECV_MSG_SIZE` |
-| `DEADLINE_EXCEEDED` | Таймаут обработки |
-| `INTERNAL` | Внутренняя ошибка |
-
-**Metadata:** заголовок `x-request-id` возвращается в response metadata (и при успехе, и при ошибке).
-
-### grpc.health.v1.Health/Check
-
-Стандартный gRPC health check. Поддерживает проверку конкретного сервиса:
-
-```json
-{"service": "ariadne.v1.RouteService"}
-```
-
-Или общий статус (пустой `service`).
-
-### Server reflection
-
-Управляется переменной `GRPC_REFLECTION` (по умолчанию `false`). При `GRPC_REFLECTION=true` — Postman и `grpcurl` автоматически обнаруживают все методы без загрузки proto-файла.
+Дедлайн обработки (`RESOLVE_TIMEOUT`) проверяется между стадиями. Добавление стадии = новая структура в цепочке `pipeline.New`, без правок в остальном коде.
 
 ## Архитектура
 
 ```
-cmd/server/              точка входа, два сервера (HTTP + gRPC), graceful shutdown
+cmd/
+  server/        прод: HTTP + gRPC (async) + пул воркеров + подключение к Redis; graceful shutdown
+  debugserver/   ТОЛЬКО для отладки: синхронная /v1/routes/resolve-collisions (без Redis/воркеров)
 internal/
-  config/                парсинг env-переменных в Config
-  codec/                 base64 <-> zlib <-> JSON <-> []geo.Point (с защитой от zip bomb)
-  geo/                   Point, Haversine, длина маршрута, пересечение отрезков
-  gen/                   сгенерированный Go-код из proto (не редактировать)
-  logger/                scoped логгер в context (request_id в каждой записи)
-  service/               бизнес-логика (Resolve: валидация → pipeline → длина)
-  pipeline/              интерфейс Stage + этапы (sort, speed, dedup, intersections)
-  api/                   HTTP: router (chi), handler, middleware, errors, health
-  grpcapi/               gRPC: handler, interceptors, server, health
-  osrm/                  заготовка под map matching (пост-MVP)
-proto/                   Proto-файлы (.proto)
-swagger/                 сгенерированная Swagger-спека (swag init)
+  config/        env → Config
+  codec/         base64 ↔ zlib ↔ JSON ↔ []geo.Point (защита от zip bomb)
+  geo/           Point, Haversine, длина, расстояние до отрезка
+  taskstore/     Redis-слой: карточка задачи (task:{taskKey}) + очередь (tasks:queue), TTL
+  worker/        пул воркеров: очередь → чистка → результат в Redis → callback
+  callback/      HTTP-клиент уведомления внешней системы (Laravel)
+  service/       бизнес-логика Resolve: валидация → pipeline → длина
+  pipeline/      Stage + стадии очистки
+  api/           REST (async): router (chi), handler (submit/status/debug), middleware, errors, health
+  grpcapi/       gRPC (async): handler, interceptors, server, health
+  debugapi/      синхронный HandleResolve — только для debugserver (не для прода)
+  gen/           сгенерированный код из proto (не редактировать)
+  logger/        scoped-логгер в context (request_id в каждой записи)
+proto/           .proto
+swagger/         сгенерированная Swagger-спека
 ```
 
-### REST Middleware (порядок снаружи внутрь)
+Прод-`internal/api` — чисто асинхронный. Синхронная ручка вынесена в `internal/debugapi` + `cmd/debugserver`, чтобы прод её не содержал (на ней держится фронт-отладчик `ariadne-debug-proxy`).
 
-1. **Recover** — ловит паники, возвращает 500
-2. **RequestID** — генерирует UUID v4, ставит заголовок `X-Request-ID`, создаёт scoped логгер с `request_id` в context
-3. **Logger** — логирует метод, путь, статус, время выполнения
-4. **LimitBody** — ограничивает размер тела запроса (`MAX_BODY_BYTES`)
-5. **ErrorMiddleware** — превращает `error` из handler в JSON-ответ с правильным статусом
+### Middleware / Interceptors
 
-### gRPC Interceptors (порядок снаружи внутрь)
-
-1. **RecoverInterceptor** — ловит паники, возвращает `codes.Internal`
-2. **RequestIDInterceptor** — генерирует UUID v4, кладёт scoped логгер в context, отправляет `x-request-id` в response metadata
-3. **LoggerInterceptor** — логирует метод, gRPC-код, время выполнения
+- **REST:** Recover → RequestID (`X-Request-ID`) → Logger → LimitBody → ErrorMiddleware.
+- **gRPC:** RecoverInterceptor → RequestIDInterceptor (`x-request-id` в metadata) → LoggerInterceptor.
 
 ## Конфигурация (env)
 
@@ -208,113 +213,69 @@ swagger/                 сгенерированная Swagger-спека (swag
 | **Server** | | |
 | `PORT` | `8080` | HTTP порт |
 | `GRPC_PORT` | `9090` | gRPC порт |
-| `GRPC_MAX_RECV_MSG_SIZE` | `10485760` (10 МБ) | лимит размера входящего gRPC-сообщения |
-| `READ_TIMEOUT` | `10s` | таймаут чтения HTTP-запроса |
-| `WRITE_TIMEOUT` | `30s` | таймаут записи HTTP-ответа |
-| `IDLE_TIMEOUT` | `2m` | таймаут keep-alive соединений без активности |
+| `GRPC_MAX_RECV_MSG_SIZE` | `10485760` | лимит входящего gRPC-сообщения |
+| `READ_TIMEOUT` / `WRITE_TIMEOUT` / `IDLE_TIMEOUT` | `10s` / `30s` / `2m` | HTTP-таймауты |
 | `SHUTDOWN_TIMEOUT` | `15s` | таймаут graceful shutdown |
-| `RESOLVE_TIMEOUT` | `25s` | таймаут обработки маршрута |
+| `RESOLVE_TIMEOUT` | `25s` | таймаут обработки одной задачи воркером |
 | **Limits** | | |
-| `MAX_BODY_BYTES` | `10485760` (10 МБ) | лимит размера HTTP body |
-| `MAX_DECOMPRESSED_BYTES` | `20971520` (20 МБ) | лимит после распаковки zlib (защита от zip bomb) |
+| `MAX_BODY_BYTES` | `10485760` | лимит HTTP body |
+| `MAX_DECOMPRESSED_BYTES` | `20971520` | лимит после распаковки zlib (zip bomb) |
 | `MAX_POINTS` | `50000` | максимум точек в маршруте |
 | **Pipeline** | | |
-| `DEDUP_DISTANCE_METERS` | `2.0` | порог близости точек для дедупликации (метры) |
-| `DEDUP_TIME_GAP` | `60s` | максимальный временной разрыв для дедупликации |
-| `MAX_SPEED_KMH` | `150` | скорость выше — GPS-телепорт, точка удаляется |
-| `MAX_ACCEL_KMH_PER_SEC` | `20` | ускорение выше — GPS-глюч, точка удаляется (км/ч за секунду) |
-| `MAX_LOOP_METERS` | `100` | петли больше — считаем реальными (не удаляем) |
-| `MAX_LOOP_SECONDS` | `10` | петли длиннее — считаем реальными (не удаляем) |
-| `INTERSECT_MAX_ITER` | `10000` | лимит итераций поиска пересечений |
-| `SIMPLIFY_MIN_METERS` | `5.0` | точки ближе этого расстояния от прямой убираются (Дугласа-Пекера) |
-| **Swagger** | | |
-| `SWAGGER_ENABLED` | `false` | `true` — включает `/swagger/*` эндпоинт |
-| **Logging** | | |
-| `GRPC_REFLECTION` | `false` | `true` — включает gRPC server reflection |
-| `LOG_LEVEL` | `info` | уровень логирования (debug/info/warn/error) |
-| **OSRM (пост-MVP)** | | |
-| `USE_OSRM` | `false` | включить OSRM map matching |
-| `OSRM_URL` | — | URL OSRM-сервиса |
+| `ANCHOR_BACKTRACK_TOLERANCE_METERS` | `0` | порог отката для якорного фильтра; `0` = выкл |
+| `TELEPORT_JUMP_METERS` | `15000` | скачок больше = подозрение на телепорт |
+| `TELEPORT_RETURN_METERS` | `2000` | возврат ближе = телепорт-загон |
+| `TELEPORT_MAX_SPAN_METERS` | `5000` | вырезаем загон только если его размах меньше |
+| `MAX_SPEED_KMH` | `150` | выше — GPS-телепорт |
+| `MAX_ACCEL_KMH_PER_SEC` | `20` | выше — GPS-глюк по ускорению |
+| `DEDUP_DISTANCE_METERS` | `2.0` | порог близости для дедупа |
+| `DEDUP_TIME_GAP` | `60s` | окно времени для дедупа |
+| `STOP_RADIUS_METERS` | `50` | размер пятна стоянки |
+| `STOP_MIN_POINTS` | `5` | от скольких точек в пятне = стоянка |
+| `SIMPLIFY_MIN_METERS` | `5.0` | Дугласа-Пекер |
+| **Redis** | | |
+| `REDIS_ADDR` | `localhost:6379` | адрес Redis |
+| `REDIS_DB` | `10` | логическая база |
+| `REDIS_PASSWORD` | — | пароль (пусто = без) |
+| `WORKER_COUNT` | `4` | число воркеров-горутин |
+| `RESULT_TTL` | `1h` | сколько задача живёт в Redis |
+| **Callback** | | |
+| `CALLBACK_URL` | — | шаблон с `{taskKey}`; пусто = коллбэки выкл |
+| `CALLBACK_RETRIES` | `3` | повторов сверх первой попытки |
+| `CALLBACK_TIMEOUT` | `5s` | таймаут одного запроса коллбэка |
+| **Прочее** | | |
+| `SWAGGER_ENABLED` | `false` | `/swagger/*` |
+| `GRPC_REFLECTION` | `false` | gRPC reflection |
+| `LOG_LEVEL` | `info` | debug/info/warn/error |
 
-## Зависимости
+## Защита от перегрузки (3 уровня)
 
-- [go-chi/chi](https://github.com/go-chi/chi) — HTTP роутер с middleware
-- [google/uuid](https://github.com/google/uuid) — генерация UUID v4
-- [google.golang.org/grpc](https://pkg.go.dev/google.golang.org/grpc) — gRPC сервер, interceptors, health check
-- [google.golang.org/protobuf](https://pkg.go.dev/google.golang.org/protobuf) — protobuf runtime
-- [swaggo/swag](https://github.com/swaggo/swag) — генерация OpenAPI-спеки из аннотаций
-- [swaggo/http-swagger](https://github.com/swaggo/http-swagger) — Swagger UI middleware для chi
-- [stretchr/testify](https://github.com/stretchr/testify) — assert/require для тестов
-
-Остальное — стандартная библиотека Go.
-
-## Защита от перегрузки
-
-Три уровня ограничения размера данных (каждый следующий ловит то, что пропустил предыдущий):
-
-**REST:**
-1. **`MAX_BODY_BYTES`** (10 МБ) — middleware `LimitBody` через `http.MaxBytesReader`. Отсекает слишком большие HTTP-запросы до чтения в память.
-2. **`MAX_DECOMPRESSED_BYTES`** (20 МБ) — `io.LimitReader` вокруг zlib-распаковки в `codec.Decode`. Защита от zip bomb.
-3. **`MAX_POINTS`** (50 000) — бизнес-лимит в `service.Resolve`. Ограничивает количество точек маршрута.
-
-**gRPC:**
-1. **`GRPC_MAX_RECV_MSG_SIZE`** (10 МБ) — `grpc.MaxRecvMsgSize`. Отсекает слишком большие protobuf-сообщения.
-2. **`MAX_DECOMPRESSED_BYTES`** (20 МБ) — аналогично REST.
-3. **`MAX_POINTS`** (50 000) — аналогично REST.
+- **REST:** `MAX_BODY_BYTES` (middleware) → `MAX_DECOMPRESSED_BYTES` (codec, zip bomb) → `MAX_POINTS` (service).
+- **gRPC:** `GRPC_MAX_RECV_MSG_SIZE` → `MAX_DECOMPRESSED_BYTES` → `MAX_POINTS`.
 
 ## Запуск
 
+Прод (нужен Redis):
 ```bash
-cp .env.example .env   # скопировать шаблон, при необходимости поправить значения
-make run               # go run ./cmd/server
+cp .env.example .env
+docker compose up --build          # ariadne + redis
+# или локально: make run  (go run ./cmd/server) — Redis подними отдельно
+```
+`docker-compose.yml` тянет переменные из `.env` (`env_file`), пробрасывает `8080`/`9090`, поднимает `redis`.
+
+Отладочный синхронный сервер (для фронт-отладчика, без Redis/воркеров):
+```bash
+go run ./cmd/debugserver           # слушает :8080, ручка /v1/routes/resolve-collisions
 ```
 
-Или через Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-`docker-compose.yml` подтягивает переменные из `.env` через `env_file`. Пробрасывает порты `8080` (HTTP) и `9090` (gRPC).
-
-### Генерация proto
-
-```bash
-make proto
-```
-
-Требует установленных `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc`.
-
-### Генерация Swagger
-
-```bash
-make swagger
-```
-
-Требует установленного `swag` (`go install github.com/swaggo/swag/cmd/swag@latest`). Генерирует `swagger/docs.go` и `swagger/swagger.json` из аннотаций в коде.
+Генерация: `make proto` (нужны `protoc` + плагины), `make swagger` (нужен `swag`).
 
 ## CI/CD (GitLab)
 
-Pipeline запускается автоматически при пуше в GitLab:
-
 ```
-git push → .gitlab-ci.yml →
-  1. test:   go vet + go test -race (на каждый пуш и MR)
-  2. build:  docker build → push в GitLab Registry (только main)
-  3. deploy: webhook (TODO — ждём URL и токен от команды)
+git push → .gitlab-ci.yml → test (go vet + go test -race) → build (docker → Registry, только main) → deploy (webhook, TODO)
 ```
-
-- Тесты бегут в кастомном образе `$CI_REGISTRY_IMAGE/ci:1.26` (Go + gcc для race detector)
-- Go-модули кешируются между запусками (`/go/pkg/mod/`)
-- Docker-образ тегается `$CI_COMMIT_SHORT_SHA` + `latest`
-
-## Пост-MVP
-
-- OSRM map matching — snap на дороги через внешний OSRM-сервис (заменит `RemoveSelfIntersections`)
-- Simplify — упрощение маршрута алгоритмом Дугласа-Пекера
-- FilterByAcceleration — фильтр по ускорению (ловит GPS-глюки с резким набором скорости, которые проходят через speed-фильтр)
-- Auth middleware — Bearer token из env
 
 ## Автор
 
-**Azat Minyazov** — [Telegram](https://t.me/azatmn) — minyazovazat@gmail.com
+**Azat Minyazov** — [Telegram](https://t.me/azatmn)

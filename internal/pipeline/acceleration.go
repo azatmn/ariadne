@@ -26,7 +26,9 @@ func (f FilterByAcceleration) Apply(_ context.Context, points []geo.Point) ([]ge
 
 		dt := curr.Time.Sub(prev.Time).Seconds()
 		if dt <= 0 {
-			continue
+			// Одинаковое время: подставляем 1с (см. sameTimestampDt в speed.go)
+			// вместо выкидывания точки. speedKmh ниже делает то же самое.
+			dt = sameTimestampDt
 		}
 
 		currSpeed := speedKmh(prev, curr)
@@ -44,7 +46,7 @@ func (f FilterByAcceleration) Apply(_ context.Context, points []geo.Point) ([]ge
 func speedKmh(a, b geo.Point) float64 {
 	dt := b.Time.Sub(a.Time).Seconds()
 	if dt <= 0 {
-		return 0
+		dt = sameTimestampDt // одинаковое время → 1с, а не «скорость 0»
 	}
 	return (geo.Haversine(a, b) / dt) * 3.6
 }

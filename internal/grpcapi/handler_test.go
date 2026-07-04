@@ -5,32 +5,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"ariadne/internal/codec"
-	"ariadne/internal/config"
 	ariadnepb "ariadne/internal/gen/ariadne"
 	"ariadne/internal/geo"
-	"ariadne/internal/service"
+	"ariadne/internal/pipeline"
+	"ariadne/internal/taskstore"
 )
 
-func testConfig() *config.Config {
-	return &config.Config{
-		DedupDistanceMeters:  2.0,
-		DedupTimeGap:         60 * time.Second,
-		MaxPoints:            50000,
-		IntersectMaxIter:     100,
-		MaxSpeedKmh:          150,
-		MaxAccelKmhPerSec:    30,
-		SimplifyMinMeters:    5.0,
-		MaxLoopMeters:        100,
-		MaxLoopSeconds:       10,
-		MaxDecompressedBytes: 100 << 20,
-		ResolveTimeout:       25 * time.Second,
-	}
+const queueKey = "tasks:queue" // должен совпадать с taskstore/queue.go
+
+func testStore(t *testing.T) (*taskstore.Store, *miniredis.Miniredis) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	return taskstore.New(mr.Addr(), 0, "", time.Hour), mr
+}
+
+func newHandler(t *testing.T) (*Handler, *taskstore.Store, *miniredis.Miniredis) {
+	t.Helper()
+	store, mr := testStore(t)
+	return NewHandler(store), store, mr
 }
 
 func testRoute(t *testing.T) string {
@@ -47,134 +48,167 @@ func testRoute(t *testing.T) string {
 	return encoded
 }
 
-func testHandler(t *testing.T) *Handler {
+func saveCard(t *testing.T, store *taskstore.Store, card *taskstore.Task) {
 	t.Helper()
-	cfg := testConfig()
-	return NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-}
-
-func TestResolveCollisions_HappyPath(t *testing.T) {
-	h := testHandler(t)
-	ctx := context.Background()
-
-	resp, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: testRoute(t),
-	})
+	ok, err := store.SaveNew(context.Background(), card)
 	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	assert.NotEmpty(t, resp.RouteCompressed)
-	assert.Greater(t, resp.LengthMeters, float64(0))
-	assert.Greater(t, resp.PointsCount, int32(0))
+	require.True(t, ok)
 }
 
-func TestResolveCollisions_EmptyRoute(t *testing.T) {
-	h := testHandler(t)
-	ctx := context.Background()
-
-	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: "",
-	})
+// grpcCode достаёт gRPC-код из ошибки (и проверяет, что ошибка вообще есть).
+func grpcCode(t *testing.T, err error) codes.Code {
+	t.Helper()
 	require.Error(t, err)
-
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+	return st.Code()
 }
 
-func TestResolveCollisions_InvalidBase64(t *testing.T) {
-	h := testHandler(t)
-	ctx := context.Background()
+// --- SubmitTask ---
 
-	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: "not-valid-base64!!!",
-	})
-	require.Error(t, err)
+// валидный submit: taskKey есть, в Redis карточка pending с нашим входом, ключ в очереди.
+func TestSubmitTask_Valid(t *testing.T) {
+	h, store, mr := newHandler(t)
+	route := testRoute(t)
 
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestResolveCollisions_TooManyPoints(t *testing.T) {
-	cfg := testConfig()
-	cfg.MaxPoints = 2
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	ctx := context.Background()
-
-	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: testRoute(t),
-	})
-	require.Error(t, err)
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.ResourceExhausted, st.Code())
-}
-
-func TestResolveCollisions_DecompressedTooLarge(t *testing.T) {
-	cfg := testConfig()
-	cfg.MaxDecompressedBytes = 1
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
-	ctx := context.Background()
-
-	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: testRoute(t),
-	})
-	require.Error(t, err)
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.ResourceExhausted, st.Code())
-}
-
-func TestResolveCollisions_ReturnDebug(t *testing.T) {
-	h := testHandler(t)
-	ctx := context.Background()
-
-	resp, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: testRoute(t),
-		ReturnDebug:     true,
-	})
+	resp, err := h.SubmitTask(context.Background(), &ariadnepb.SubmitTaskRequest{RouteCompressed: route})
 	require.NoError(t, err)
-	require.NotNil(t, resp)
+	require.NotEmpty(t, resp.GetTaskKey())
 
-	assert.NotEmpty(t, resp.Debug)
-	for _, s := range resp.Debug {
-		assert.NotEmpty(t, s.Name)
-	}
-}
-
-func TestResolveCollisions_NoDebugByDefault(t *testing.T) {
-	h := testHandler(t)
-	ctx := context.Background()
-
-	resp, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: testRoute(t),
-		ReturnDebug:     false,
-	})
+	card, err := store.Get(context.Background(), resp.GetTaskKey())
 	require.NoError(t, err)
-	require.NotNil(t, resp)
+	assert.Equal(t, taskstore.StatusPending, card.Status)
+	assert.Equal(t, route, card.Input)
+	assert.False(t, card.CreatedAt.IsZero())
 
-	assert.Empty(t, resp.Debug)
+	list, err := mr.List(queueKey)
+	require.NoError(t, err)
+	assert.Contains(t, list, resp.GetTaskKey())
 }
 
-func TestResolveCollisions_Timeout(t *testing.T) {
-	cfg := testConfig()
-	cfg.ResolveTimeout = 1 * time.Nanosecond
-	cfg.IntersectMaxIter = 1_000_000
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+// пустой вход → InvalidArgument и НИЧЕГО не записано.
+func TestSubmitTask_Empty(t *testing.T) {
+	h, _, mr := newHandler(t)
+	_, err := h.SubmitTask(context.Background(), &ariadnepb.SubmitTaskRequest{RouteCompressed: ""})
+	assert.Equal(t, codes.InvalidArgument, grpcCode(t, err))
+	assert.Empty(t, mr.Keys(), "при отказе в Redis не должно появиться ключей")
+}
 
-	ctx := context.Background()
+// мусорный непустой вход принимается (submit не декодит) — станет failed у воркера.
+func TestSubmitTask_GarbageAccepted(t *testing.T) {
+	h, store, _ := newHandler(t)
+	resp, err := h.SubmitTask(context.Background(), &ariadnepb.SubmitTaskRequest{RouteCompressed: "@@@ не base64 @@@"})
+	require.NoError(t, err)
 
-	_, err := h.ResolveCollisions(ctx, &ariadnepb.ResolveCollisionsRequest{
-		RouteCompressed: testRoute(t),
+	card, err := store.Get(context.Background(), resp.GetTaskKey())
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusPending, card.Status)
+	assert.Equal(t, "@@@ не base64 @@@", card.Input)
+}
+
+// два submit → разные ключи, оба в очереди.
+func TestSubmitTask_UniqueKeys(t *testing.T) {
+	h, _, mr := newHandler(t)
+	route := testRoute(t)
+
+	r1, err := h.SubmitTask(context.Background(), &ariadnepb.SubmitTaskRequest{RouteCompressed: route})
+	require.NoError(t, err)
+	r2, err := h.SubmitTask(context.Background(), &ariadnepb.SubmitTaskRequest{RouteCompressed: route})
+	require.NoError(t, err)
+	require.NotEqual(t, r1.GetTaskKey(), r2.GetTaskKey())
+
+	list, err := mr.List(queueKey)
+	require.NoError(t, err)
+	assert.Len(t, list, 2)
+}
+
+// --- GetTask ---
+
+func TestGetTask_Pending(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{Key: "p1", Status: taskstore.StatusPending, Input: "in"})
+
+	resp, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "p1"})
+	require.NoError(t, err)
+	assert.Equal(t, "p1", resp.GetTaskKey())
+	assert.Equal(t, string(taskstore.StatusPending), resp.GetStatus())
+	assert.Empty(t, resp.GetRouteCompressed())
+	assert.Zero(t, resp.GetLengthMeters())
+}
+
+func TestGetTask_Done(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{Key: "d1", Status: taskstore.StatusDone, Input: "orig", Result: "cleaned", LengthMeters: 99.5})
+
+	resp, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "d1"})
+	require.NoError(t, err)
+	assert.Equal(t, string(taskstore.StatusDone), resp.GetStatus())
+	assert.Equal(t, "cleaned", resp.GetRouteCompressed())
+	assert.Equal(t, 99.5, resp.GetLengthMeters())
+}
+
+// АДВЕРСАРИАЛЬНО: done отдаёт Result, а НЕ Input.
+func TestGetTask_DoneReturnsResultNotInput(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{Key: "d2", Status: taskstore.StatusDone, Input: "INPUT", Result: "RESULT"})
+
+	resp, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "d2"})
+	require.NoError(t, err)
+	assert.Equal(t, "RESULT", resp.GetRouteCompressed())
+	assert.NotEqual(t, "INPUT", resp.GetRouteCompressed())
+}
+
+func TestGetTask_Failed(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{Key: "f1", Status: taskstore.StatusFailed, Error: "decode: boom"})
+
+	resp, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "f1"})
+	require.NoError(t, err)
+	assert.Equal(t, string(taskstore.StatusFailed), resp.GetStatus())
+	assert.Equal(t, "decode: boom", resp.GetError())
+	assert.Empty(t, resp.GetRouteCompressed())
+}
+
+func TestGetTask_NotFound(t *testing.T) {
+	h, _, _ := newHandler(t)
+	_, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "nope"})
+	assert.Equal(t, codes.NotFound, grpcCode(t, err))
+}
+
+func TestGetTask_EmptyKey(t *testing.T) {
+	h, _, _ := newHandler(t)
+	_, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: ""})
+	assert.Equal(t, codes.InvalidArgument, grpcCode(t, err))
+}
+
+// --- GetTaskDebug ---
+
+func TestGetTaskDebug_Done(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{
+		Key: "g1", Status: taskstore.StatusDone,
+		Debug: []pipeline.StageStats{{Name: "dedup", PointsBefore: 100, PointsAfter: 90}},
 	})
-	if err == nil {
-		return
-	}
 
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.DeadlineExceeded, st.Code())
+	resp, err := h.GetTaskDebug(context.Background(), &ariadnepb.GetTaskDebugRequest{TaskKey: "g1"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetDebug(), 1)
+	assert.Equal(t, "dedup", resp.GetDebug()[0].GetName())
+	assert.Equal(t, int32(100), resp.GetDebug()[0].GetPointsBefore())
+}
+
+func TestGetTaskDebug_NotFound(t *testing.T) {
+	h, _, _ := newHandler(t)
+	_, err := h.GetTaskDebug(context.Background(), &ariadnepb.GetTaskDebugRequest{TaskKey: "nope"})
+	assert.Equal(t, codes.NotFound, grpcCode(t, err))
+}
+
+// debug у pending (stats ещё нет) → пусто, без паники.
+func TestGetTaskDebug_PendingEmpty(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{Key: "g2", Status: taskstore.StatusPending})
+
+	resp, err := h.GetTaskDebug(context.Background(), &ariadnepb.GetTaskDebugRequest{TaskKey: "g2"})
+	require.NoError(t, err)
+	assert.Empty(t, resp.GetDebug())
 }

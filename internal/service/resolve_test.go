@@ -17,12 +17,9 @@ func testConfig() *config.Config {
 		DedupDistanceMeters: 2.0,
 		DedupTimeGap:        60 * time.Second,
 		MaxPoints:           50_000,
-		IntersectMaxIter:    100,
 		MaxSpeedKmh:         150,
 		MaxAccelKmhPerSec:   30,
 		SimplifyMinMeters:   5.0,
-		MaxLoopMeters:       100,
-		MaxLoopSeconds:      10,
 	}
 }
 
@@ -94,11 +91,11 @@ func TestResolveBuildParams(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxSpeedKmh = 200
 	cfg.DedupDistanceMeters = 5.0
-	cfg.IntersectMaxIter = 500
+	cfg.StopRadiusMeters = 42
 	svc := New(cfg)
 
 	params := svc.buildParams()
 	assert.Equal(t, 200.0, params.MaxSpeedKmh, "MaxSpeedKmh")
 	assert.Equal(t, 5.0, params.DedupDistanceMeters, "DedupDistanceMeters")
-	assert.Equal(t, 500, params.IntersectMaxIter, "IntersectMaxIter")
+	assert.Equal(t, 42.0, params.StopRadiusMeters, "StopRadiusMeters")
 }

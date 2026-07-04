@@ -19,18 +19,30 @@ type Config struct {
 	MaxDecompressedBytes int64
 	ResolveTimeout       time.Duration
 
-	DedupDistanceMeters float64
-	DedupTimeGap        time.Duration
-	SimplifyMinMeters   float64
-	MaxPoints           int
-	IntersectMaxIter    int
-	MaxSpeedKmh         float64
-	MaxLoopMeters       float64
-	MaxLoopSeconds      float64
-	MaxAccelKmhPerSec   float64
+	DedupDistanceMeters   float64
+	DedupTimeGap          time.Duration
+	SimplifyMinMeters     float64
+	MaxPoints             int
+	MaxSpeedKmh           float64
+	MaxAccelKmhPerSec     float64
+	TeleportJumpMeters    float64
+	TeleportReturnMeters  float64
+	TeleportMaxSpanMeters float64
+	StopRadiusMeters      float64
+	StopMinPoints         int
+	AnchorToleranceMeters float64
 
-	UseOSRM bool
-	OSRMURL string
+	// Redis (async: очередь задач + хранилище результатов)
+	RedisAddr     string
+	RedisDB       int
+	RedisPassword string
+	WorkerCount   int
+	ResultTTL     time.Duration
+
+	// Callback (Go → Laravel по готовности задачи)
+	CallbackURL     string // шаблон с плейсхолдером {taskKey}; пустой → коллбэки выключены
+	CallbackRetries int
+	CallbackTimeout time.Duration
 
 	SwaggerEnabled bool
 	GRPCReflection bool
@@ -56,14 +68,29 @@ func Load() (*Config, error) {
 		ResolveTimeout:       envDuration("RESOLVE_TIMEOUT", 25*time.Second),
 
 		// Pipeline
-		DedupDistanceMeters: envFloat("DEDUP_DISTANCE_METERS", 2.0),
-		DedupTimeGap:        envDuration("DEDUP_TIME_GAP", 60*time.Second),
-		MaxSpeedKmh:         envFloat("MAX_SPEED_KMH", 150),
-		MaxLoopMeters:       envFloat("MAX_LOOP_METERS", 100),
-		MaxLoopSeconds:      envFloat("MAX_LOOP_SECONDS", 10),
-		MaxAccelKmhPerSec:   envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
-		IntersectMaxIter:    envInt("INTERSECT_MAX_ITER", 10_000),
-		SimplifyMinMeters:   envFloat("SIMPLIFY_MIN_METERS", 5.0),
+		DedupDistanceMeters:   envFloat("DEDUP_DISTANCE_METERS", 2.0),
+		DedupTimeGap:          envDuration("DEDUP_TIME_GAP", 60*time.Second),
+		MaxSpeedKmh:           envFloat("MAX_SPEED_KMH", 150),
+		MaxAccelKmhPerSec:     envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
+		TeleportJumpMeters:    envFloat("TELEPORT_JUMP_METERS", 15000),
+		TeleportReturnMeters:  envFloat("TELEPORT_RETURN_METERS", 2000),
+		TeleportMaxSpanMeters: envFloat("TELEPORT_MAX_SPAN_METERS", 5000),
+		StopRadiusMeters:      envFloat("STOP_RADIUS_METERS", 50),
+		StopMinPoints:         envInt("STOP_MIN_POINTS", 5),
+		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
+		AnchorToleranceMeters: envFloat("ANCHOR_BACKTRACK_TOLERANCE_METERS", 0), // 0 = якорный фильтр выключен
+
+		// Redis (async: очередь + хранилище результатов)
+		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),
+		RedisDB:       envInt("REDIS_DB", 10),
+		RedisPassword: envStr("REDIS_PASSWORD", ""),
+		WorkerCount:   envInt("WORKER_COUNT", 4),
+		ResultTTL:     envDuration("RESULT_TTL", time.Hour),
+
+		// Callback (Go → Laravel)
+		CallbackURL:     envStr("CALLBACK_URL", ""),
+		CallbackRetries: envInt("CALLBACK_RETRIES", 3),
+		CallbackTimeout: envDuration("CALLBACK_TIMEOUT", 5*time.Second),
 
 		// Swagger
 		SwaggerEnabled: envBool("SWAGGER_ENABLED", false),
@@ -71,15 +98,7 @@ func Load() (*Config, error) {
 
 		// Logging
 		LogLevel: envStr("LOG_LEVEL", "info"),
-
-		// OSRM (post-MVP)
-		// UseOSRM: envBool("USE_OSRM", false),
-		// OSRMURL: envStr("OSRM_URL", ""),
 	}
-
-	//if cfg.UseOSRM && cfg.OSRMURL == "" {
-	//	return nil, fmt.Errorf("config: USE_OSRM=true but OSRM_URL is empty")
-	//}
 
 	return cfg, nil
 }

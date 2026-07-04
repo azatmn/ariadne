@@ -51,7 +51,8 @@ func TestWriteErrorJSON(t *testing.T) {
 	assert.Equal(t, "field X is required", payload.Error.Message)
 }
 
-func TestWriteErrorWithRequestID(t *testing.T) {
+// requestId в тело НЕ кладём — он остаётся только в заголовке X-Request-ID.
+func TestWriteErrorRequestIDNotInBody(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	w.Header().Set("X-Request-ID", "test-req-123")
@@ -61,8 +62,8 @@ func TestWriteErrorWithRequestID(t *testing.T) {
 	var payload ErrorPayload
 	err := json.NewDecoder(w.Body).Decode(&payload)
 	require.NoError(t, err, "failed to decode")
-	require.NotNil(t, payload.Error.Details, "expected details with requestId")
-	assert.Equal(t, "test-req-123", payload.Error.Details["requestId"])
+	assert.Nil(t, payload.Error.Details, "requestId не должен попадать в тело")
+	assert.Equal(t, "test-req-123", w.Header().Get("X-Request-ID"), "id остаётся в заголовке")
 }
 
 func TestAppErrorWithWrappedError(t *testing.T) {

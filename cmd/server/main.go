@@ -9,13 +9,17 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	_ "ariadne/swagger"
 
 	"ariadne/internal/api"
+	"ariadne/internal/callback"
 	"ariadne/internal/config"
 	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
+	"ariadne/internal/taskstore"
+	"ariadne/internal/worker"
 )
 
 // @title Ariadne API
@@ -37,10 +41,42 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
+	// Redis — хранилище задач и результатов. Соединение ленивое, поэтому
+	// сразу проверяем связь: если Redis недоступен, стартовать нет смысла.
+	store := taskstore.New(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword, cfg.ResultTTL)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := store.Ping(pingCtx); err != nil {
+		pingCancel()
+		logger.Error("redis unavailable", "addr", cfg.RedisAddr, "error", err)
+		os.Exit(1)
+	}
+	pingCancel()
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Error("redis close error", "error", err)
+		}
+	}()
+	logger.Info("redis connected", "addr", cfg.RedisAddr, "db", cfg.RedisDB)
+
 	svc := service.New(cfg)
 
+	// Callback-клиент: уведомляет Laravel по готовности задачи. Пустой
+	// CALLBACK_URL → коллбэки выключены (no-op).
+	notifier := callback.New(cfg.CallbackURL, cfg.CallbackRetries, cfg.CallbackTimeout, logger)
+	if cfg.CallbackURL == "" {
+		logger.Warn("CALLBACK_URL is empty, callbacks disabled")
+	}
+
+	// Воркер-пул: N горутин разбирают очередь задач из Redis и пишут результат
+	// обратно в карточку. workerCtx отменяем отдельно — при выключении сначала
+	// гасим воркеров, потом ждём, пока допишут текущие задачи.
+	pool := worker.New(store, svc, notifier, logger, cfg.WorkerCount, cfg.ResolveTimeout, cfg.MaxDecompressedBytes)
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	pool.Start(workerCtx)
+	logger.Info("worker pool started", "workers", cfg.WorkerCount)
+
 	// HTTP
-	httpHandler := api.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	httpHandler := api.NewHandler(store)
 	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes, cfg.SwaggerEnabled)
 
 	httpSrv := &http.Server{
@@ -51,8 +87,8 @@ func main() {
 		IdleTimeout:  cfg.IdleTimeout,
 	}
 
-	// gRPC
-	grpcHandler := grpcapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	// gRPC (async-only: синхронный ResolveCollisions убран)
+	grpcHandler := grpcapi.NewHandler(store)
 	grpcSrv := grpcapi.NewServer(grpcHandler, logger, cfg.GRPCMaxRecvMsgSize, cfg.GRPCReflection)
 
 	errCh := make(chan error, 2)
@@ -92,8 +128,25 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	// Воркерам нужен ОТДЕЛЬНЫЙ, больший бюджет, чем HTTP/gRPC: задача в полёте
+	// должна успеть дописать результат в Redis до store.Close() (defer выше),
+	// иначе запись уйдёт в закрытый клиент и результат потеряется (A-M2). Худший
+	// путь = чтение+обработка+запись; HTTP/gRPC довольствуются ShutdownTimeout.
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), pool.DrainBudget())
+	defer cancelDrain()
+
+	// Гасим воркеров: перестают забирать новые задачи из очереди.
+	// pool.Shutdown ниже дождётся, пока допишут уже взятые.
+	cancelWorkers()
+
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		pool.Shutdown(drainCtx)
+		logger.Info("worker pool stopped")
+	}()
 
 	go func() {
 		defer wg.Done()
