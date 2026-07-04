@@ -57,6 +57,16 @@ type DebugResponse struct {
 
 // HandleSubmit принимает маршрут, кладёт карточку в Redis и ставит её в очередь.
 // НЕ декодит вход (это работа воркера) — submit обязан быть мгновенным.
+// @Summary      Сдать маршрут в очередь на очистку
+// @Description  Принимает сжатый маршрут, ставит задачу в очередь, сразу отдаёт taskKey. Обработка — в фоне; результат забирать по taskKey.
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        body body SubmitRequest true "Маршрут для обработки"
+// @Success      202 {object} SubmitResponse
+// @Failure      400 {object} ErrorPayload
+// @Failure      500 {object} ErrorPayload
+// @Router       /v1/tasks [post]
 func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) error {
 	var req SubmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -106,6 +116,15 @@ func (h *Handler) HandleSubmit(w http.ResponseWriter, r *http.Request) error {
 }
 
 // HandleStatus отдаёт статус задачи и — при done — очищенный маршрут с длиной.
+// @Summary      Статус и результат задачи
+// @Description  По taskKey возвращает статус (pending/done/failed); при done — очищенный маршрут и длину, при failed — текст ошибки.
+// @Tags         tasks
+// @Produce      json
+// @Param        taskKey path string true "Ключ задачи (из submit)"
+// @Success      200 {object} StatusResponse
+// @Failure      404 {object} ErrorPayload
+// @Failure      500 {object} ErrorPayload
+// @Router       /v1/tasks/{taskKey} [get]
 func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) error {
 	task, err := h.getTask(r, chi.URLParam(r, "taskKey"))
 	if err != nil {
@@ -124,6 +143,15 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) error {
 }
 
 // HandleDebug отдаёт разбор по стадиям pipeline (пусто, пока задача не done).
+// @Summary      Разбор задачи по стадиям pipeline
+// @Description  По taskKey возвращает статистику по каждой стадии очистки (заполнена при done).
+// @Tags         tasks
+// @Produce      json
+// @Param        taskKey path string true "Ключ задачи (из submit)"
+// @Success      200 {object} DebugResponse
+// @Failure      404 {object} ErrorPayload
+// @Failure      500 {object} ErrorPayload
+// @Router       /v1/tasks/{taskKey}/debug [get]
 func (h *Handler) HandleDebug(w http.ResponseWriter, r *http.Request) error {
 	task, err := h.getTask(r, chi.URLParam(r, "taskKey"))
 	if err != nil {

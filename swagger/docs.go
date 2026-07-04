@@ -55,9 +55,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/routes/resolve-collisions": {
+        "/v1/tasks": {
             "post": {
-                "description": "Принимает сжатый маршрут, прогоняет через pipeline (sort, speed filter, dedup, intersections), возвращает очищенный результат",
+                "description": "Принимает сжатый маршрут, ставит задачу в очередь, сразу отдаёт taskKey. Обработка — в фоне; результат забирать по taskKey.",
                 "consumes": [
                     "application/json"
                 ],
@@ -65,9 +65,9 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "routes"
+                    "tasks"
                 ],
-                "summary": "Устранение коллизий GPS-маршрута",
+                "summary": "Сдать маршрут в очередь на очистку",
                 "parameters": [
                     {
                         "description": "Маршрут для обработки",
@@ -75,15 +75,15 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.ResolveRequest"
+                            "$ref": "#/definitions/api.SubmitRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
-                            "$ref": "#/definitions/api.ResolveResponse"
+                            "$ref": "#/definitions/api.SubmitResponse"
                         }
                     },
                     "400": {
@@ -92,14 +92,84 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.ErrorPayload"
                         }
                     },
-                    "413": {
-                        "description": "Request Entity Too Large",
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorPayload"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/tasks/{taskKey}": {
+            "get": {
+                "description": "По taskKey возвращает статус (pending/done/failed); при done — очищенный маршрут и длину, при failed — текст ошибки.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Статус и результат задачи",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ задачи (из submit)",
+                        "name": "taskKey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.StatusResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorPayload"
                         }
                     },
-                    "422": {
-                        "description": "Unprocessable Entity",
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorPayload"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/tasks/{taskKey}/debug": {
+            "get": {
+                "description": "По taskKey возвращает статистику по каждой стадии очистки (заполнена при done).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Разбор задачи по стадиям pipeline",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ задачи (из submit)",
+                        "name": "taskKey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.DebugResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/api.ErrorPayload"
                         }
@@ -115,6 +185,23 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.DebugResponse": {
+            "type": "object",
+            "properties": {
+                "debug": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pipeline.StageStats"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "taskKey": {
+                    "type": "string"
+                }
+            }
+        },
         "api.ErrorBody": {
             "type": "object",
             "properties": {
@@ -138,56 +225,39 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ResolveRequest": {
+        "api.StatusResponse": {
             "type": "object",
             "properties": {
-                "returnDebug": {
-                    "type": "boolean",
-                    "example": false
+                "error": {
+                    "type": "string"
+                },
+                "lengthMeters": {
+                    "type": "number"
                 },
                 "routeCompressed": {
-                    "type": "string",
-                    "example": "eJy..."
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "taskKey": {
+                    "type": "string"
                 }
             }
         },
-        "api.ResolveResponse": {
+        "api.SubmitRequest": {
             "type": "object",
             "properties": {
-                "debug": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/pipeline.StageStats"
-                    }
-                },
-                "lengthBeforeMeters": {
-                    "type": "number",
-                    "example": 1170260.79
-                },
-                "lengthMeters": {
-                    "type": "number",
-                    "example": 1168113.85
-                },
-                "pointsCount": {
-                    "type": "integer",
-                    "example": 2981
-                },
-                "removedPointsCount": {
-                    "type": "integer",
-                    "example": 35
-                },
                 "routeCompressed": {
-                    "type": "string",
-                    "example": "eJy..."
-                },
-                "warnings": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "example": [
-                        "intersect: max iterations reached"
-                    ]
+                    "type": "string"
+                }
+            }
+        },
+        "api.SubmitResponse": {
+            "type": "object",
+            "properties": {
+                "taskKey": {
+                    "type": "string"
                 }
             }
         },
@@ -200,7 +270,7 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string",
-                    "example": "RemoveSelfIntersections"
+                    "example": "collapse_stops"
                 },
                 "pointsAfter": {
                     "type": "integer",
