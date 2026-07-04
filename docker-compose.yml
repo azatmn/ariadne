@@ -18,7 +18,9 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # Только localhost: Redis для локальной разработки не торчит в сеть (LAN).
+      # Сервис ariadne внутри compose ходит в него по имени redis:6379, а не сюда.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:

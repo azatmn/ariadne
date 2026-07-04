@@ -39,12 +39,15 @@ type SubmitResponse struct {
 }
 
 // StatusResponse — ответ GET /v1/tasks/{taskKey}. Result/Length есть при done,
-// Error — при failed.
+// Error — при failed. У lengthMeters НЕТ omitempty: у done валидная длина может
+// быть ровно 0 (все точки в одной координате), и поле должно присутствовать,
+// чтобы клиент отличал «длина 0» от «поля нет». В gRPC это и так работает
+// (proto3 всегда шлёт скалярный 0).
 type StatusResponse struct {
 	TaskKey         string  `json:"taskKey"`
 	Status          string  `json:"status"`
 	RouteCompressed string  `json:"routeCompressed,omitempty"`
-	LengthMeters    float64 `json:"lengthMeters,omitempty"`
+	LengthMeters    float64 `json:"lengthMeters"`
 	Error           string  `json:"error,omitempty"`
 }
 

@@ -79,6 +79,18 @@ func (p *Pool) Shutdown(ctx context.Context) {
 	}
 }
 
+// DrainBudget — сколько максимум нужно одной задаче, чтобы гарантированно
+// ДОписать результат в Redis: чтение карточки (ioTimeout) + обработка (timeout) +
+// запись результата (ioTimeout). На этот срок и надо давать Shutdown при
+// выключении, иначе store.Close() оборвёт незавершённую запись (баг A-M2).
+// Коллбэк сюда НЕ входит: результат сохраняется до него, а сам коллбэк Redis не
+// трогает — его можно бросить. +1с запаса, чтобы бюджет был доказуемо БОЛЬШЕ
+// худшего пути, а не впритык: иначе на самом пороге Shutdown мог бы выйти по
+// таймауту ровно в момент записи и Close() обогнал бы её (F-1).
+func (p *Pool) DrainBudget() time.Duration {
+	return p.timeout + 2*ioTimeout + time.Second
+}
+
 // worker — цикл одного воркера: ждёт задачу из очереди и обрабатывает.
 func (p *Pool) worker(ctx context.Context) {
 	defer p.wg.Done()
@@ -121,7 +133,9 @@ var notifyTimeout = 30 * time.Second
 //	           done/failed гарантированно записывается.
 //
 // Все из context.Background() — не завязаны на выключение, чтобы начатую задачу
-// доделать. recover не даёт кривой задаче уронить воркер.
+// доделать. Паника в обработке ловится в runFill и превращается в failed (задача
+// не зависает в pending); внешний recover — последняя страховка воркера на случай
+// паники в чтении/записи/коллбэке.
 func (p *Pool) process(taskKey string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -137,8 +151,10 @@ func (p *Pool) process(taskKey string) {
 		return
 	}
 
+	// runFill (не fill напрямую): паника внутри не проскочит мимо procCancel и
+	// мимо пометки failed — вернётся ошибкой, задача завершится штатно.
 	procCtx, procCancel := context.WithTimeout(context.Background(), p.timeout)
-	fillErr := p.fill(procCtx, card)
+	fillErr := p.runFill(procCtx, card)
 	procCancel()
 
 	if fillErr != nil {
@@ -164,6 +180,22 @@ func (p *Pool) process(taskKey string) {
 	if err := p.notify.Notify(notifyCtx, card.Key, string(card.Status)); err != nil {
 		p.logger.Warn("callback failed", "taskKey", card.Key, "status", card.Status, "error", err)
 	}
+}
+
+// runFill вызывает fill и превращает панику в обычную ошибку. Без этого паника
+// в обработке (например кривые данные в новой стадии) прошла бы мимо пометки
+// failed, и задача зависла бы в pending до TTL: номерок из очереди уже снят
+// (BRPOP без копии), повторно её никто не возьмёт. Отдавая ошибку, направляем
+// задачу штатным путём failed → Update → callback. Стек — в лог, клиенту уходит
+// короткое "panic: …".
+func (p *Pool) runFill(ctx context.Context, card *taskstore.Task) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("panic during processing", "taskKey", card.Key, "panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return p.fill(ctx, card)
 }
 
 // fill чистит маршрут и заполняет поля результата прямо в card.

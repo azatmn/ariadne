@@ -128,6 +128,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	// Воркерам нужен ОТДЕЛЬНЫЙ, больший бюджет, чем HTTP/gRPC: задача в полёте
+	// должна успеть дописать результат в Redis до store.Close() (defer выше),
+	// иначе запись уйдёт в закрытый клиент и результат потеряется (A-M2). Худший
+	// путь = чтение+обработка+запись; HTTP/gRPC довольствуются ShutdownTimeout.
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), pool.DrainBudget())
+	defer cancelDrain()
+
 	// Гасим воркеров: перестают забирать новые задачи из очереди.
 	// pool.Shutdown ниже дождётся, пока допишут уже взятые.
 	cancelWorkers()
@@ -137,7 +144,7 @@ func main() {
 
 	go func() {
 		defer wg.Done()
-		pool.Shutdown(ctx)
+		pool.Shutdown(drainCtx)
 		logger.Info("worker pool stopped")
 	}()
 

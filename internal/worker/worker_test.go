@@ -75,6 +75,19 @@ func (f fakeResolver) Resolve(ctx context.Context, points []geo.Point) (*service
 	return &service.Result{Points: points, LengthMeters: 42}, nil
 }
 
+// blockingResolver держит Resolve заблокированным, пока тест не отпустит —
+// чтобы искусственно держать задачу «в полёте» и проверять дренаж при shutdown.
+type blockingResolver struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingResolver) Resolve(_ context.Context, points []geo.Point) (*service.Result, error) {
+	b.started <- struct{}{}
+	<-b.release
+	return &service.Result{Points: points, LengthMeters: 42}, nil
+}
+
 // --- хелперы ---
 
 func testConfig() *config.Config {
@@ -228,18 +241,26 @@ func TestProcess_GetMissing_NoPanic(t *testing.T) {
 	assert.ErrorIs(t, err, taskstore.ErrNotFound)
 }
 
-// паника в обработке не должна валить воркер (recover в process).
-// Текущее поведение: при панике статус остаётся pending (результат не пишется).
-func TestProcess_PanicRecovered(t *testing.T) {
+// паника в обработке не должна ни валить воркер, ни оставлять задачу висеть в
+// pending: recover превращает панику в ошибку → задача завершается как failed и
+// callback шлётся. Иначе (баг H1, ревью 2026-07-04) номерок уже снят с очереди
+// без копии, повторно задачу никто не возьмёт, и она застряла бы до TTL.
+func TestProcess_PanicRecovered_MarksFailed(t *testing.T) {
 	store := newTestStore(t)
-	pool := newPool(t, store, fakeResolver{shouldPanic: true}, 10*time.Second)
+	rec := &recordingNotifier{}
+	pool := newPoolN(t, store, fakeResolver{shouldPanic: true}, rec, 10*time.Second)
 	saveTask(t, store, "p", validInput(t))
 
 	assert.NotPanics(t, func() { pool.process("p") })
 
 	got, err := store.Get(context.Background(), "p")
 	require.NoError(t, err)
-	assert.Equal(t, taskstore.StatusPending, got.Status)
+	assert.Equal(t, taskstore.StatusFailed, got.Status)
+	assert.Contains(t, got.Error, "panic")
+
+	calls := rec.snapshot()
+	require.Len(t, calls, 1, "паника-как-failed должна дёрнуть callback")
+	assert.Equal(t, "failed", calls[0].status)
 }
 
 // полный цикл: Start → задача в очереди → воркер её разобрал → done → Shutdown.
@@ -262,6 +283,59 @@ func TestPool_ProcessesQueuedTask(t *testing.T) {
 	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shCancel()
 	pool.Shutdown(shCtx)
+}
+
+// DrainBudget покрывает худший путь записи (чтение + обработка + запись) с
+// секундным запасом, чтобы бюджет был строго больше суммы таймаутов, а не впритык.
+func TestPool_DrainBudget(t *testing.T) {
+	store := newTestStore(t)
+	pool := newPool(t, store, fakeResolver{}, 25*time.Second)
+	assert.Equal(t, 25*time.Second+2*ioTimeout+time.Second, pool.DrainBudget())
+}
+
+// A-M2: Shutdown с бюджетом DrainBudget ДОЛЖЕН дождаться, пока задача в полёте
+// допишет результат, а не вернуться раньше (иначе store.Close() в main оборвёт
+// запись). Проверяем: пока задача заблокирована — Shutdown висит; после
+// разблокировки — возвращается, и результат записан.
+func TestPool_ShutdownWaitsForInflightTask(t *testing.T) {
+	store := newTestStore(t)
+	br := &blockingResolver{started: make(chan struct{}), release: make(chan struct{})}
+	pool := newPool(t, store, br, 10*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	saveTask(t, store, "inflight", validInput(t))
+	require.NoError(t, store.Enqueue(context.Background(), "inflight"))
+
+	<-br.started // воркер взял задачу и вошёл в обработку
+	cancel()     // гасим воркеров, как при shutdown
+
+	shutdownReturned := make(chan struct{})
+	go func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), pool.DrainBudget())
+		defer dcancel()
+		pool.Shutdown(dctx)
+		close(shutdownReturned)
+	}()
+
+	// задача ещё не отпущена → Shutdown не должен вернуться
+	select {
+	case <-shutdownReturned:
+		t.Fatal("Shutdown вернулся до завершения задачи в полёте")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(br.release) // отпускаем обработку
+
+	select {
+	case <-shutdownReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown не вернулся после завершения задачи")
+	}
+
+	got, err := store.Get(context.Background(), "inflight")
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusDone, got.Status, "результат должен быть записан во время дренажа")
 }
 
 // --- коллбэк ---

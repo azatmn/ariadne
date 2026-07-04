@@ -115,6 +115,40 @@ func TestAccelerationEmpty(t *testing.T) {
 	assert.Len(t, result, 1)
 }
 
+// Точка с одинаковым временем и близко — легитимна: подставная dt=1с не даёт
+// фильтру ускорения выкинуть её вслепую (раньше dt=0 → continue → удаление).
+func TestAccelerationSameTimeCloseKept(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	points := []geo.Point{
+		{Time: t0, Lon: 37.6000, Lat: 55.7500},
+		{Time: t0.Add(10 * time.Second), Lon: 37.6010, Lat: 55.7500}, // ~62 м за 10с ≈ 22 км/ч
+		{Time: t0.Add(10 * time.Second), Lon: 37.6011, Lat: 55.7500}, // тот же миг, ~6 м от предыдущей
+	}
+
+	f := FilterByAcceleration{MaxAccelKmhPerSec: 30}
+	result, _, err := f.Apply(context.Background(), points)
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "close same-time point must be kept")
+}
+
+// Глюк с одинаковым временем (далеко) выкидывается и не роняет следующую точку.
+func TestAccelerationSameTimeFarDropped(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	points := []geo.Point{
+		{Time: t0, Lon: 37.6000, Lat: 55.7500},
+		{Time: t0.Add(10 * time.Second), Lon: 37.6010, Lat: 55.7500}, // ~22 км/ч
+		{Time: t0.Add(10 * time.Second), Lon: 30.3141, Lat: 59.9398}, // тот же миг, Питер = глюк
+		{Time: t0.Add(20 * time.Second), Lon: 37.6011, Lat: 55.7500}, // позже, рядом
+	}
+
+	f := FilterByAcceleration{MaxAccelKmhPerSec: 30}
+	result, _, err := f.Apply(context.Background(), points)
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "far same-time glitch dropped, others kept")
+}
+
 func TestAccelerationBraking(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 

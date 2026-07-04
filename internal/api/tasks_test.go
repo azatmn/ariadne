@@ -215,6 +215,23 @@ func TestStatus_Done(t *testing.T) {
 	assert.Equal(t, 1234.5, resp.LengthMeters)
 }
 
+// АДВЕРСАРИАЛЬНО (C-M2): у done-задачи с длиной РОВНО 0 поле lengthMeters всё
+// равно должно присутствовать в JSON, а не пропадать (было omitempty → пропадало,
+// и клиент не мог отличить «длина 0» от «поля нет»).
+func TestStatus_DoneZeroLengthPresent(t *testing.T) {
+	router, store, _ := taskEnv(t)
+	saveCard(t, store, &taskstore.Task{
+		Key: "k5", Status: taskstore.StatusDone,
+		Input: "in", Result: "cleaned", LengthMeters: 0,
+	})
+
+	rec := serve(t, router, http.MethodGet, "/v1/tasks/k5", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"lengthMeters"`,
+		"lengthMeters должно быть в done-ответе даже при длине 0")
+}
+
 // АДВЕРСАРИАЛЬНО: done-ответ отдаёт Result (очищенный), а НЕ Input (исходный).
 // Защита от опечатки, когда вернули не то поле.
 func TestStatus_DoneDoesNotLeakInput(t *testing.T) {
