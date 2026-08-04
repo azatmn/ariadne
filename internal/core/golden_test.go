@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -336,6 +337,86 @@ func TestGolden_WeightSignsMatchExactly(t *testing.T) {
 			}
 			assert.Zero(t, flipped, "знак веса разошёлся у %d точек", flipped)
 			t.Logf("%s: точек ровно на границе доверия — %d", g.UID, borderline)
+		})
+	}
+}
+
+// goldenRules — какие точки уличили правила прототипа.
+type goldenRules struct {
+	UID     string       `json:"uid"`
+	Points  [][3]float64 `json:"points"`
+	Traps   []int        `json:"traps"`
+	Islands []int        `json:"islands"`
+}
+
+func loadGoldenRules(t *testing.T) []goldenRules {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "rules_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы правил не найдены")
+
+	out := make([]goldenRules, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenRules
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenRules) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// diffSets возвращает, чего Go нашёл лишнего и чего недосчитался.
+func diffSets(got map[int]struct{}, want []int) (extra, missing []int) {
+	w := make(map[int]struct{}, len(want))
+	for _, i := range want {
+		w[i] = struct{}{}
+	}
+	for i := range got {
+		if _, ok := w[i]; !ok {
+			extra = append(extra, i)
+		}
+	}
+	for _, i := range want {
+		if _, ok := got[i]; !ok {
+			missing = append(missing, i)
+		}
+	}
+	slices.Sort(extra)
+	slices.Sort(missing)
+	return extra, missing
+}
+
+func TestGolden_TrapsMatchPrototype(t *testing.T) {
+	for _, g := range loadGoldenRules(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			extra, missing := diffSets(FindTraps(g.points()), g.Traps)
+			assert.Empty(t, extra, "Go уличил лишние точки")
+			assert.Empty(t, missing, "Go недосчитался уличённых точек")
+			t.Logf("%s: ловушек %d — совпало", g.UID, len(g.Traps))
+		})
+	}
+}
+
+func TestGolden_IslandsMatchPrototype(t *testing.T) {
+	for _, g := range loadGoldenRules(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			extra, missing := diffSets(FindIslands(g.points()), g.Islands)
+			assert.Empty(t, extra, "Go уличил лишние точки")
+			assert.Empty(t, missing, "Go недосчитался уличённых точек")
+			t.Logf("%s: островов %d — совпало", g.UID, len(g.Islands))
 		})
 	}
 }
