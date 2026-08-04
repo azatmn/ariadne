@@ -3,6 +3,7 @@ package core
 import (
 	"compress/gzip"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -201,6 +202,140 @@ func TestGolden_StopOwnerCoversRanges(t *testing.T) {
 			assert.Zero(t, missing, "точек стоянок не попало в сопоставление")
 			assert.Zero(t, wrong, "точки приписаны не той стоянке")
 			assert.Len(t, owner, covered, "лишних точек в сопоставлении быть не должно")
+		})
+	}
+}
+
+// goldenWeights — снэпы с настоящего OSRM и посчитанные прототипом веса.
+type goldenWeights struct {
+	UID    string       `json:"uid"`
+	Points [][3]float64 `json:"points"`
+	Snaps  []*float64   `json:"snaps"` // null = OSRM промолчал
+	Sigma  float64      `json:"sigma"`
+	Raw    []float64    `json:"raw"`
+	Final  []float64    `json:"final"`
+}
+
+func loadGoldenWeights(t *testing.T) []goldenWeights {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "weights_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы весов не найдены")
+
+	out := make([]goldenWeights, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenWeights
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenWeights) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// snapSlices превращает null-able снэпы прототипа в пару (значение, отвечен ли).
+func (g goldenWeights) snapSlices() ([]float64, []bool) {
+	snaps := make([]float64, len(g.Snaps))
+	ok := make([]bool, len(g.Snaps))
+	for i, s := range g.Snaps {
+		if s != nil {
+			snaps[i], ok[i] = *s, true
+		}
+	}
+	return snaps, ok
+}
+
+// Веса — числа с плавающей точкой, поэтому сверяем с допуском. Он взят с
+// запасом к округлению выгрузки (12 знаков) и к возможной разнице в последнем
+// бите между реализациями экспоненты.
+const weightEps = 1e-9
+
+func TestGolden_SigmaMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenWeights(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			snaps, ok := g.snapSlices()
+			assert.InDelta(t, g.Sigma, SigmaOf(snaps, ok), 1e-12,
+				"оценка точности прибора разошлась")
+		})
+	}
+}
+
+func TestGolden_RawWeightsMatchPrototype(t *testing.T) {
+	for _, g := range loadGoldenWeights(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			snaps, ok := g.snapSlices()
+			sigma := SigmaOf(snaps, ok)
+			require.Len(t, g.Raw, len(snaps))
+
+			worst, at := 0.0, -1
+			for i := range snaps {
+				got := Weight(snaps[i], ok[i], sigma)
+				if d := math.Abs(got - g.Raw[i]); d > worst {
+					worst, at = d, i
+				}
+			}
+			assert.Less(t, worst, weightEps,
+				"наибольшее расхождение сырого веса %g в точке %d", worst, at)
+			t.Logf("%s: сырые веса, наибольшее расхождение %g", g.UID, worst)
+		})
+	}
+}
+
+// Главная сверка по весам: итог после сглаживания на понижение. Здесь
+// складываются все три шага сразу, и любая ошибка в любом из них видна.
+func TestGolden_FinalWeightsMatchPrototype(t *testing.T) {
+	for _, g := range loadGoldenWeights(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			snaps, ok := g.snapSlices()
+			got := PointWeights(g.points(), snaps, ok)
+			require.Len(t, got, len(g.Final))
+
+			worst, at := 0.0, -1
+			for i := range got {
+				if d := math.Abs(got[i] - g.Final[i]); d > worst {
+					worst, at = d, i
+				}
+			}
+			assert.Less(t, worst, weightEps,
+				"наибольшее расхождение итогового веса %g в точке %d "+
+					"(Go %.12f, прототип %.12f)", worst, at, got[at], g.Final[at])
+			t.Logf("%s: итоговые веса на %d точках, наибольшее расхождение %g",
+				g.UID, len(got), worst)
+		})
+	}
+}
+
+// Знак веса решает, брать точку или обходить. Даже если числа разойдутся в
+// последних битах, знак обязан совпадать всюду — иначе цепочка пойдёт иначе.
+func TestGolden_WeightSignsMatchExactly(t *testing.T) {
+	for _, g := range loadGoldenWeights(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			snaps, ok := g.snapSlices()
+			got := PointWeights(g.points(), snaps, ok)
+
+			var flipped, borderline int
+			for i := range got {
+				if (got[i] > 0) != (g.Final[i] > 0) {
+					flipped++
+				}
+				if math.Abs(g.Final[i]) < 1e-6 {
+					borderline++
+				}
+			}
+			assert.Zero(t, flipped, "знак веса разошёлся у %d точек", flipped)
+			t.Logf("%s: точек ровно на границе доверия — %d", g.UID, borderline)
 		})
 	}
 }
