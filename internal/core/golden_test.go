@@ -420,3 +420,60 @@ func TestGolden_IslandsMatchPrototype(t *testing.T) {
 		})
 	}
 }
+
+// goldenDual — точки, уличённые прототипом как слабый поток.
+type goldenDual struct {
+	UID    string       `json:"uid"`
+	Points [][3]float64 `json:"points"`
+	Dual   []int        `json:"dual"`
+}
+
+func loadGoldenDual(t *testing.T) []goldenDual {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "dual_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы двух потоков не найдены")
+
+	out := make([]goldenDual, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenDual
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenDual) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// Самая придирчивая из сверок: правило перебирает места, раздвигает границы
+// эпизода и сравнивает доли времени. Ошибись хоть в одном шаге — множества
+// разойдутся на сотни точек.
+func TestGolden_DualMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenDual(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			extra, missing := diffSets(FindDual(g.points()), g.Dual)
+			assert.Empty(t, extra, "Go уличил лишние точки (первые: %v)", head(extra))
+			assert.Empty(t, missing, "Go недосчитался точек (первые: %v)", head(missing))
+			t.Logf("%s: уличено %d из %d — совпало", g.UID, len(g.Dual), len(g.Points))
+		})
+	}
+}
+
+func head(v []int) []int {
+	if len(v) > 10 {
+		return v[:10]
+	}
+	return v
+}
