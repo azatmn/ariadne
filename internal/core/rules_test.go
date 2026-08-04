@@ -223,3 +223,74 @@ func BenchmarkFindIslands(b *testing.B) {
 }
 
 var _ = time.Second
+
+// ------------------------------------------------- защита от негодного входа
+//
+// Эти случаи в настоящих данных не встречаются, но приходят от битого трекера
+// и от собственных ошибок в вызывающем коде. Молчаливая порча памяти хуже
+// любого неверного ответа, поэтому границы проверяются явно.
+
+func TestTrustedStop_InvalidRangeIsRejected(t *testing.T) {
+	pts := still(10, 120, 10.0, 0.0, 0.0002, 0)
+	bad := []StopRange{
+		{-1, 5},             // начало за левой границей
+		{0, len(pts)},       // конец за правой
+		{5, 2},              // вывернут
+		{0, len(pts) + 100}, // далеко за правой
+	}
+	for _, s := range bad {
+		assert.False(t, TrustedStop(pts, s, 10, true), "интервал %v негоден", s)
+	}
+}
+
+func TestSpanMeters_InvalidRangeIsZero(t *testing.T) {
+	pts := still(10, 120, 10.0, 0.0, 0.0002, 0)
+	for _, s := range []StopRange{{-1, 5}, {0, len(pts)}, {7, 3}} {
+		assert.Zero(t, spanMeters(pts, s), "интервал %v негоден", s)
+	}
+}
+
+func TestExitPlausible_SubSecondSteps(t *testing.T) {
+	// Точки с интервалом меньше секунды: делить на такое время нельзя, иначе
+	// любой шаг превращается в тысячи километров в час. Секунда — нижняя
+	// планка, как в прототипе.
+	pts := []geo.Point{
+		at(0, 10.0, 0.0),
+		{Time: t0.Add(300 * time.Millisecond), Lon: 10.004, Lat: 0.0}, // 445 м
+	}
+	assert.NotPanics(t, func() { exitPlausible(pts, 0) })
+}
+
+func TestFindDual_BackwardTimeIsIgnored(t *testing.T) {
+	// Время идёт назад: так выглядит переупорядоченная пачка выгрузки буфера.
+	// Судить о скорости по отрицательному времени нельзя.
+	var pts []geo.Point
+	for k := range 30 {
+		p := town
+		if k%2 == 1 {
+			p = poset
+		}
+		// каждая следующая точка на минуту РАНЬШЕ предыдущей
+		pts = append(pts, at(10000-k*60, p.lon, p.lat))
+	}
+	assert.NotPanics(t, func() { FindDual(pts) })
+}
+
+func TestFindDual_JumpBetweenIdenticalPlaces(t *testing.T) {
+	// Прыжки есть, но «два места» оказались одним и тем же: эпизод разбирать
+	// нечего, и правило обязано пройти мимо, а не делить точку саму с собой.
+	var pts []geo.Point
+	sec := 0
+	for range 20 {
+		pts = append(pts, at(sec, town.lon, town.lat))
+		sec += 30
+		pts = append(pts, at(sec, town.lon+0.0001, town.lat))
+		sec += 30
+	}
+	assert.Empty(t, FindDual(pts))
+}
+
+func TestMedianInPlace_Empty(t *testing.T) {
+	assert.Zero(t, medianInPlace(nil))
+	assert.Zero(t, medianInPlace([]float64{}))
+}

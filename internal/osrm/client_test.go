@@ -460,3 +460,203 @@ func TestGet_SendsFiveDecimalCoordinates(t *testing.T) {
 	assert.Contains(t, got, "37.12346,55.98765", "координаты округляются до пяти знаков")
 	assert.Contains(t, got, "38.10000,56.20000", "и дописываются нулями до пяти знаков")
 }
+
+// ------------------------------------------- проверка связи и негодные ответы
+
+func TestPing_OkWhenServerRoutes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":1200,"duration":90,` +
+			`"geometry":{"coordinates":[[37.61,55.75],[37.62,55.76]]}}],` +
+			`"waypoints":[{"location":[37.61,55.75]},{"location":[37.62,55.76]}]}`))
+	}))
+	defer srv.Close()
+
+	require.NoError(t, newClient(t, srv, nil).Ping(context.Background()))
+}
+
+func TestPing_FailsWhenServerSilent(t *testing.T) {
+	// Проверка связи нужна на старте: сервис, который не достучался до OSRM,
+	// обязан сказать об этом сразу в логе, а не выяснять это на первой задаче.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	err := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0 }).Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), srv.URL, "в ошибке должен быть адрес, куда не достучались")
+}
+
+func TestPing_FailsOnUnreachableHost(t *testing.T) {
+	c, err := New(Config{BaseURL: "http://127.0.0.1:1", RequestTimeout: time.Second})
+	require.NoError(t, err)
+	assert.Error(t, c.Ping(context.Background()))
+}
+
+func TestSnap_RejectsMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"Ok","waypoints":[{"distance":`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0; cfg.BatchPoints = 100 })
+	_, ok, warns := c.Snap(context.Background(), track(4))
+	assert.False(t, ok[0], "на обрезанном ответе снэпов быть не может")
+	assert.NotEmpty(t, warns)
+}
+
+func TestSnap_RejectsNonOkCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"NoSegment","waypoints":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0; cfg.BatchPoints = 100 })
+	_, ok, warns := c.Snap(context.Background(), track(4))
+	assert.False(t, ok[0])
+	assert.NotEmpty(t, warns)
+}
+
+func TestSnap_RejectsWrongWaypointCount(t *testing.T) {
+	// Сервер ответил успехом, но точек в ответе меньше, чем послали. Молча
+	// разложить их по индексам значило бы приписать снэпы чужим точкам.
+	//
+	// Отвечаем на одну точку меньше запрошенного, а не фиксированным числом:
+	// при фиксированном клиент дробит пачку пополам и рано или поздно попадает
+	// в размер, где ответ случайно сходится, — и тест перестаёт проверять то,
+	// ради чего написан.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(waypointsJSON(countCoords(r.URL.Path)-1, 5)))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0; cfg.BatchPoints = 100 })
+	_, ok, warns := c.Snap(context.Background(), track(6))
+	assert.False(t, ok[0], "несовпадение числа точек — отказ, а не догадки")
+	assert.NotEmpty(t, warns)
+}
+
+func TestPairDistance_RejectsMalformedTable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/table/") {
+			_, _ = w.Write([]byte(`{"code":"Ok","distances":`)) // обрезано
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":700,"duration":60}],` +
+			`"waypoints":[{"location":[37.6,55.7]},{"location":[37.7,55.7]}]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	dist, ok, warns := c.PairDistance(context.Background(), []Pair{{A: pts[0], B: pts[1]}})
+	assert.NotEmpty(t, warns, "негодный ответ матрицы обязан попасть в предупреждения")
+	// Матрица не удалась, но ручка не закрыта (не 404) — значит и запасного
+	// пути нет: пара остаётся без ответа.
+	assert.False(t, ok[0])
+	assert.Zero(t, dist[0])
+}
+
+func TestPairDistance_RejectsTruncatedMatrix(t *testing.T) {
+	// Матрица меньше, чем должна быть: брать из неё диагональ — читать чужие
+	// клетки.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Contains(t, r.URL.Path, "/table/")
+		_, _ = w.Write([]byte(`{"code":"Ok","distances":[[0,100]]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(3)
+	_, ok, warns := c.PairDistance(context.Background(),
+		[]Pair{{A: pts[0], B: pts[1]}, {A: pts[1], B: pts[2]}})
+	assert.False(t, ok[0])
+	assert.NotEmpty(t, warns)
+}
+
+func TestRouteGeometry_RejectsMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0 })
+	pts := track(2)
+	r, ok := c.RouteGeometry(context.Background(), pts[0], pts[1])
+	assert.False(t, ok)
+	assert.Nil(t, r)
+}
+
+func TestRouteGeometry_EmptyRoutesList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	_, ok := c.RouteGeometry(context.Background(), pts[0], pts[1])
+	assert.False(t, ok, "успех без маршрутов — не успех")
+}
+
+func TestPairDistance_CancelledBeforeStart(t *testing.T) {
+	// Бюджет задачи истёк ещё до похода в сеть. Клиент обязан вернуться
+	// сразу, ничего не спросив.
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.UseTable = TableOff })
+	pts := track(3)
+	_, ok, _ := c.PairDistance(ctx, []Pair{{A: pts[0], B: pts[1]}, {A: pts[1], B: pts[2]}})
+	assert.False(t, ok[0])
+	assert.Zero(t, calls.Load(), "с отменённым бюджетом в сеть ходить нельзя")
+}
+
+func TestSnap_CancelledBeforeStart(t *testing.T) {
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, ok, warns := newClient(t, srv, nil).Snap(ctx, track(10))
+	assert.False(t, ok[0])
+	assert.NotEmpty(t, warns)
+	assert.Zero(t, calls.Load())
+}
+
+// ------------------------------------------------------------- minValid
+
+func TestMinValid(t *testing.T) {
+	// В матрице «нет пути» приходит как null, что в Go даёт ноль. Отличить его
+	// от настоящего нуля нельзя, поэтому ноль здесь считаем отсутствием:
+	// расстояние между двумя разными точками нулевым не бывает.
+	cases := []struct {
+		a, b    float64
+		want    float64
+		wantHas bool
+		why     string
+	}{
+		{100, 200, 100, true, "оба направления известны — берём меньшее"},
+		{200, 100, 100, true, "порядок не важен"},
+		{100, 0, 100, true, "обратное направление недоступно"},
+		{0, 100, 100, true, "прямое направление недоступно"},
+		{0, 0, 0, false, "ни одного направления"},
+		{-1, 50, 50, true, "отрицательное значение — тоже отсутствие"},
+	}
+	for _, c := range cases {
+		got, has := minValid(c.a, c.b)
+		assert.Equal(t, c.wantHas, has, c.why)
+		assert.Equal(t, c.want, got, c.why)
+	}
+}
