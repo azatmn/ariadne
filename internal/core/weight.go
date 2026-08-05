@@ -147,14 +147,25 @@ func Smooth(w []float64, pts []geo.Point, window time.Duration) []float64 {
 // Точка не может быть достовернее своего окружения, но может быть хуже —
 // отсюда минимум из сырого и сглаженного.
 func PointWeights(pts []geo.Point, snaps []float64, ok []bool) []float64 {
+	_, out := pointWeights(pts, snaps, ok)
+	return out
+}
+
+// pointWeights возвращает и сырой ряд, и итоговый.
+//
+// Сырой нужен сборке ядра: привилегия доверенной стоянке даётся от СЫРОГО веса
+// (`max(raw, StopTrustW)`), а не от сглаженного. У долгой стоянки соседи — это
+// уже другой эпизод, машина стояла двенадцать часов, и сглаживание топит её
+// чужими глюками: на `4daf8725` стоянка со снэпом 15 м имела вес +0.67, а после
+// сглаживания −0.19, потому что справа начинались снэпы в полтора километра.
+func pointWeights(pts []geo.Point, snaps []float64, ok []bool) (raw, final []float64) {
 	n := len(pts)
-	out := make([]float64, n)
+	raw, final = make([]float64, n), make([]float64, n)
 	if n == 0 {
-		return out
+		return raw, final
 	}
 
 	sigma := SigmaOf(snaps, ok)
-	raw := make([]float64, n)
 	for i := range raw {
 		if i < len(snaps) && i < len(ok) {
 			raw[i] = Weight(snaps[i], ok[i], sigma)
@@ -162,10 +173,10 @@ func PointWeights(pts []geo.Point, snaps []float64, ok []bool) []float64 {
 	}
 
 	smoothed := Smooth(raw, pts, SmoothWindow)
-	for i := range out {
-		out[i] = min(raw[i], smoothed[i])
+	for i := range final {
+		final[i] = min(raw[i], smoothed[i])
 	}
-	return out
+	return raw, final
 }
 
 // median — середина набора, не портя вход.

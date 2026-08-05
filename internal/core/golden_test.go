@@ -1040,3 +1040,131 @@ func TestGolden_AmnestyMatchesPrototype(t *testing.T) {
 		})
 	}
 }
+
+// goldenCore — сквозной эталон ядра: вход трека и индексы оставленных точек.
+//
+// Всё остальное в этом файле сверяет ЧАСТИ ядра на входе, который им передал
+// Python. Здесь проверяется то, чего части не проверяют вовсе: получит ли Go
+// сам такие же входы и сложит ли их в том же порядке.
+type goldenCore struct {
+	UID    string              `json:"uid"`
+	Points [][3]float64        `json:"points"`
+	Sub    [][3]float64        `json:"sub"`   // трек после схлопывания стоянок
+	Snaps  []*float64          `json:"snaps"` // и снэпы на нём
+	Tape   map[string]*float64 `json:"tape"`
+	Keep   []int               `json:"keep"`
+	Report struct {
+		Reordered    int     `json:"reordered"`
+		Collapsed    int     `json:"collapsed"`
+		StopsTotal   int     `json:"stops_total"`
+		StopsTrusted int     `json:"stops_trusted"`
+		StopsFrozen  int     `json:"stops_frozen"`
+		Split        int     `json:"split"`
+		Spread       int     `json:"spread"`
+		Amnesty      int     `json:"amnesty"`
+		Loops        int     `json:"loops"`
+		RoadBanned   int     `json:"road_banned"`
+		RoadPasses   int     `json:"road_passes"`
+		Dropped      int     `json:"dropped"`
+		KmBefore     float64 `json:"km_before"`
+		KmAfter      float64 `json:"km_after"`
+	} `json:"report"`
+}
+
+func loadGoldenCore(t *testing.T) []goldenCore {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "core_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "сквозные золотые векторы ядра не найдены")
+
+	out := make([]goldenCore, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenCore
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func rawPoints(rows [][3]float64) []geo.Point {
+	pts := make([]geo.Point, len(rows))
+	for i, p := range rows {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// tapeSnaps отдаёт записанные снэпы — и заодно проверяет, что спросили про те
+// же самые точки. Совпадение этого списка означает, что схлопывание стоянок и
+// перестановка пачек в Go дали ровно тот же промежуточный трек; несовпадение
+// показывает расхождение раньше и точнее, чем итоговые индексы.
+type tapeSnaps struct {
+	t     *testing.T
+	want  [][3]float64
+	snaps []*float64
+}
+
+func (s *tapeSnaps) Snap(_ context.Context, pts []geo.Point) ([]float64, []bool, []string) {
+	require.Len(s.t, pts, len(s.want), "в OSRM ушло не столько точек, сколько у прототипа")
+	for i, p := range pts {
+		require.Equal(s.t, int64(s.want[i][0]), p.Time.Unix(), "точка %d: время", i)
+		require.InDelta(s.t, s.want[i][1], p.Lon, 1e-12, "точка %d: долгота", i)
+		require.InDelta(s.t, s.want[i][2], p.Lat, 1e-12, "точка %d: широта", i)
+	}
+
+	snaps := make([]float64, len(pts))
+	ok := make([]bool, len(pts))
+	for i := range pts {
+		if i < len(s.snaps) && s.snaps[i] != nil {
+			snaps[i], ok[i] = *s.snaps[i], true
+		}
+	}
+	return snaps, ok, nil
+}
+
+func TestGolden_CoreMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenCore(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := rawPoints(g.Points)
+			roads := &tapeRoads{t: t, tape: g.Tape}
+			core := &Core{
+				Snap: &tapeSnaps{t: t, want: g.Sub, snaps: g.Snaps},
+				Road: roads,
+			}
+
+			keep, rep, err := core.Run(context.Background(), pts)
+			require.NoError(t, err)
+
+			assert.Zero(t, roads.miss,
+				"Go спросил %d пар, которых прототип не спрашивал", roads.miss)
+
+			// Промежуточные числа сверяем ДО итоговых: если разойдётся
+			// схлопывание или раздвоение, по одним индексам не понять, где.
+			assert.Equal(t, g.Report.Reordered, rep.Reordered, "переставлено точек")
+			assert.Equal(t, g.Report.Collapsed, rep.Collapsed, "схлопнуто точек")
+			assert.Equal(t, g.Report.StopsTotal, rep.StopsTotal, "стоянок найдено")
+			assert.Equal(t, g.Report.StopsTrusted, rep.StopsTrusted, "стоянок доверенных")
+			assert.Equal(t, g.Report.StopsFrozen, rep.StopsFrozen, "залипаний")
+			assert.Equal(t, g.Report.Split, rep.Split, "уличено раздвоением")
+			assert.Equal(t, g.Report.Spread, rep.Spread, "накрыто штрафом за эпизод")
+			assert.Equal(t, g.Report.Amnesty, rep.Amnesty, "оправдано амнистией")
+			assert.Equal(t, g.Report.Loops, rep.Loops, "петель найдено")
+			assert.Equal(t, g.Report.RoadBanned, rep.RoadBanned, "запретов по дорогам")
+			assert.Equal(t, g.Report.RoadPasses, rep.RoadPasses, "проходов цикла")
+
+			// И главное: те же самые точки в том же порядке.
+			assert.Equal(t, g.Keep, keep, "состав и порядок оставленных точек")
+			assert.Equal(t, g.Report.Dropped, rep.Dropped, "выброшено точек")
+			assert.InDelta(t, g.Report.KmAfter, rep.KmAfter, 1e-6, "километраж после чистки")
+
+			t.Logf("%s: %d точек → %d оставлено, %.0f → %.0f км — совпало",
+				g.UID, len(pts), len(keep), rep.KmBefore, rep.KmAfter)
+		})
+	}
+}
