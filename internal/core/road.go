@@ -95,6 +95,15 @@ type RoadState struct {
 
 	// asked — какие вопросы уже задавали. Ключ по времени, см. askedID.
 	asked map[askedID]struct{}
+
+	// loops — какие окна уже разобрало правило петель.
+	//
+	// Отдельно от `asked`, хотя ключ той же формы. В прототипе это один
+	// словарь, но с разной формой ключа: у переходов пара меток времени, у
+	// петель та же пара с пометкой. Свалить их в одну карту значит молча
+	// потерять часть вопросов — концы окна и переход цепочки нередко
+	// совпадают.
+	loops map[askedID]struct{}
 }
 
 func NewRoadState() *RoadState {
@@ -102,6 +111,7 @@ func NewRoadState() *RoadState {
 		Banned:  make(map[BanID]float64),
 		Penalty: make(map[int]float64),
 		asked:   make(map[askedID]struct{}),
+		loops:   make(map[askedID]struct{}),
 	}
 }
 

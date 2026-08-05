@@ -745,14 +745,16 @@ func (g goldenRoad) points() []geo.Point {
 // tapeRoads отвечает из записи, а при промахе валит тест: спросить то, чего
 // прототип не спрашивал, — само по себе расхождение.
 type tapeRoads struct {
-	t    *testing.T
-	tape map[string]*float64
-	miss int
+	t     *testing.T
+	tape  map[string]*float64
+	miss  int
+	asked int
 }
 
 func (r *tapeRoads) PairDistance(_ context.Context, pairs []Pair) ([]float64, []bool, []string) {
 	dist := make([]float64, len(pairs))
 	ok := make([]bool, len(pairs))
+	r.asked += len(pairs)
 	for i, p := range pairs {
 		key := fmt.Sprintf("%.5f,%.5f;%.5f,%.5f", p.A.Lon, p.A.Lat, p.B.Lon, p.B.Lat)
 		v, found := r.tape[key]
@@ -887,6 +889,154 @@ func TestGolden_ChainRulesMatchPrototype(t *testing.T) {
 
 			t.Logf("%s: огрызки %d, виражи %d, окна %d, одиночки %d — совпало",
 				g.UID, g.Stubs.Hits, g.Lateral.Hits, g.SpeedWin.Hits, g.Lonely.Hits)
+		})
+	}
+}
+
+// goldenLoops — правило петель на настоящем треке.
+//
+// Снимок берётся с ПЕРВОГО вызова внутри прогона: там цепочка ещё не изуродована
+// штрафами прошлых проходов, и вход воспроизводится без остальных правил.
+type goldenLoops struct {
+	UID     string              `json:"uid"`
+	Points  [][3]float64        `json:"points"`
+	Chain   []int               `json:"chain"`
+	Found   int                 `json:"found"`
+	Penalty map[string]float64  `json:"penalty"`
+	Tape    map[string]*float64 `json:"tape"`
+}
+
+func loadGoldenLoops(t *testing.T) []goldenLoops {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "loops_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы правила петель не найдены")
+
+	out := make([]goldenLoops, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenLoops
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenLoops) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+func TestGolden_LoopsMatchPrototype(t *testing.T) {
+	for _, g := range loadGoldenLoops(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := g.points()
+			roads := &tapeRoads{t: t, tape: g.Tape}
+			st := NewRoadState()
+
+			found := CheckLoops(context.Background(), roads, pts, g.Chain, st)
+
+			// Спросить не то, что спрашивал прототип, — уже расхождение:
+			// значит окна нарезаны иначе или отсев работает по-другому.
+			assert.Zero(t, roads.miss,
+				"Go спросил %d окон, которых прототип не спрашивал", roads.miss)
+			assert.Equal(t, len(g.Tape), roads.asked,
+				"число заданных вопросов разошлось с прототипом")
+
+			assert.Equal(t, g.Found, found, "число найденных петель разошлось")
+			comparePenalty(t, "петли", g.Penalty, st.Penalty)
+
+			t.Logf("%s: окон спрошено %d, петель %d, наказано %d точек — совпало",
+				g.UID, len(g.Tape), found, len(st.Penalty))
+		})
+	}
+}
+
+// goldenAmnesty — амнистия на настоящем треке: ровно тот вход, который
+// прототип передал `find_amnesty` внутри прогона, и ровно тот ответ.
+type goldenAmnesty struct {
+	UID     string       `json:"uid"`
+	Points  [][3]float64 `json:"points"`
+	Snaps   []*float64   `json:"snaps"`
+	Spread  []int        `json:"spread"`
+	Bad     []int        `json:"bad"`
+	Decoy   []float64    `json:"decoy"`
+	Amnesty []int        `json:"amnesty"`
+}
+
+func loadGoldenAmnesty(t *testing.T) []goldenAmnesty {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "amnesty_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы амнистии не найдены")
+
+	out := make([]goldenAmnesty, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenAmnesty
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenAmnesty) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// snaps разворачивает питоновские null в пару «значение + есть ли оно».
+func (g goldenAmnesty) snaps() ([]float64, []bool) {
+	snaps := make([]float64, len(g.Snaps))
+	ok := make([]bool, len(g.Snaps))
+	for i, s := range g.Snaps {
+		if s != nil {
+			snaps[i], ok[i] = *s, true
+		}
+	}
+	return snaps, ok
+}
+
+func TestGolden_AmnestyMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenAmnesty(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := g.points()
+			snaps, ok := g.snaps()
+
+			spread := make(map[int]struct{}, len(g.Spread))
+			for _, i := range g.Spread {
+				spread[i] = struct{}{}
+			}
+			bad := make(map[int]struct{}, len(g.Bad))
+			for _, i := range g.Bad {
+				bad[i] = struct{}{}
+			}
+
+			got := FindAmnesty(pts, snaps, ok, spread, bad, g.Decoy)
+
+			require.Len(t, got, len(g.Amnesty), "число оправданных точек разошлось")
+			for _, i := range g.Amnesty {
+				assert.Contains(t, got, i, "точка %d оправдана прототипом, а Go её не оправдал", i)
+			}
+
+			t.Logf("%s: подозреваемых %d, уличённых %d, оправдано %d — совпало",
+				g.UID, len(g.Spread), len(g.Bad), len(got))
 		})
 	}
 }
