@@ -602,3 +602,87 @@ func TestGolden_ReorderMatchesPrototype(t *testing.T) {
 		})
 	}
 }
+
+// goldenChain — веса на входе и цепочка, выбранная прототипом.
+type goldenChain struct {
+	UID     string       `json:"uid"`
+	Points  [][3]float64 `json:"points"`
+	Weights []float64    `json:"weights"`
+	Chain   []int        `json:"chain"`
+}
+
+func loadGoldenChain(t *testing.T) []goldenChain {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "chain_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы цепочки не найдены")
+
+	out := make([]goldenChain, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenChain
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenChain) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// Сверка сердца алгоритма. Веса берутся готовые, из прототипа, — так
+// проверяется именно выбор цепочки, а не всё сразу.
+func TestGolden_ChainMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenChain(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			got := BuildChain(g.points(), g.Weights, nil)
+			require.Len(t, got, len(g.Chain),
+				"длина цепочки разошлась: Go %d, прототип %d", len(got), len(g.Chain))
+
+			for i := range got {
+				require.Equal(t, g.Chain[i], got[i],
+					"цепочка разошлась на позиции %d", i)
+			}
+			t.Logf("%s: цепочка из %d точек — совпала", g.UID, len(got))
+		})
+	}
+}
+
+// Свойства цепочки на живых данных.
+func TestGolden_ChainInvariants(t *testing.T) {
+	for _, g := range loadGoldenChain(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := g.points()
+			chain := BuildChain(pts, g.Weights, nil)
+			require.NotEmpty(t, chain)
+
+			for k := 1; k < len(chain); k++ {
+				assert.Greater(t, chain[k], chain[k-1], "цепочка обязана возрастать")
+				assert.True(t, Reachable(pts[chain[k-1]], pts[chain[k]], nil),
+					"переход %d→%d физически невозможен", chain[k-1], chain[k])
+			}
+
+			// Сумма весов цепочки не может быть меньше веса лучшей одиночной
+			// точки: иначе выгоднее было бы взять только её.
+			var sum, bestSingle float64
+			for _, i := range chain {
+				sum += g.Weights[i]
+			}
+			for _, x := range g.Weights {
+				bestSingle = max(bestSingle, x)
+			}
+			assert.GreaterOrEqual(t, sum, bestSingle-1e-9,
+				"цепочка легче одной лучшей точки — выбор неоптимален")
+		})
+	}
+}
