@@ -477,3 +477,53 @@ func head(v []int) []int {
 	}
 	return v
 }
+
+// goldenSplit — точки, уличённые прототипом как раздвоение.
+type goldenSplit struct {
+	UID    string       `json:"uid"`
+	Points [][3]float64 `json:"points"`
+	Split  []int        `json:"split"`
+}
+
+func loadGoldenSplit(t *testing.T) []goldenSplit {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "split_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы раздвоения не найдены")
+
+	out := make([]goldenSplit, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenSplit
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenSplit) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// Раздвоение — самое многоярусное правило: скользящее окно, кластеры, возвраты,
+// растяжка границ, доли слотов, повторные проходы. Ошибка в любом ярусе
+// разъезжается на сотни точек, поэтому сверка здесь особенно ценна.
+func TestGolden_SplitMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenSplit(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			extra, missing := diffSets(FindSplit(g.points()), g.Split)
+			assert.Empty(t, extra, "Go уличил лишние точки (первые: %v)", head(extra))
+			assert.Empty(t, missing, "Go недосчитался точек (первые: %v)", head(missing))
+			t.Logf("%s: уличено %d из %d — совпало", g.UID, len(g.Split), len(g.Points))
+		})
+	}
+}
