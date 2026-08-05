@@ -802,3 +802,91 @@ func TestGolden_RoadCheckMatchesPrototype(t *testing.T) {
 		})
 	}
 }
+
+// goldenChainRules — штрафы, начисленные правилами по готовой цепочке.
+type goldenChainRules struct {
+	UID    string       `json:"uid"`
+	Points [][3]float64 `json:"points"`
+	Chain  []int        `json:"chain"`
+
+	Stubs    goldenRuleHit `json:"stubs"`
+	Lateral  goldenRuleHit `json:"lateral"`
+	SpeedWin goldenRuleHit `json:"speedwin"`
+	Lonely   goldenRuleHit `json:"lonely"`
+}
+
+type goldenRuleHit struct {
+	Hits    int                `json:"hits"`
+	Penalty map[string]float64 `json:"penalty"`
+}
+
+func loadGoldenChainRules(t *testing.T) []goldenChainRules {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "chainrules_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы правил по цепочке не найдены")
+
+	out := make([]goldenChainRules, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenChainRules
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenChainRules) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// comparePenalty сверяет штрафы точка в точку.
+func comparePenalty(t *testing.T, name string, want map[string]float64, got map[int]float64) {
+	t.Helper()
+	require.Len(t, got, len(want), "%s: число наказанных точек разошлось", name)
+	for k, v := range want {
+		i, err := strconv.Atoi(k)
+		require.NoError(t, err)
+		assert.InDelta(t, v, got[i], 1e-9, "%s: штраф точки %d разошёлся", name, i)
+	}
+}
+
+func TestGolden_ChainRulesMatchPrototype(t *testing.T) {
+	for _, g := range loadGoldenChainRules(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := g.points()
+
+			pen := map[int]float64{}
+			hits := CheckStubs(pts, g.Chain, pen, nil)
+			assert.Equal(t, g.Stubs.Hits, hits, "огрызки: число срабатываний")
+			comparePenalty(t, "огрызки", g.Stubs.Penalty, pen)
+
+			pen = map[int]float64{}
+			hits = CheckLateral(pts, g.Chain, pen)
+			assert.Equal(t, g.Lateral.Hits, hits, "виражи: число срабатываний")
+			comparePenalty(t, "виражи", g.Lateral.Penalty, pen)
+
+			pen = map[int]float64{}
+			hits = CheckSpeedWin(pts, g.Chain, pen)
+			assert.Equal(t, g.SpeedWin.Hits, hits, "окна скорости: число срабатываний")
+			comparePenalty(t, "окна скорости", g.SpeedWin.Penalty, pen)
+
+			pen = map[int]float64{}
+			hits = CheckLonely(pts, g.Chain, pen)
+			assert.Equal(t, g.Lonely.Hits, hits, "одиночки: число срабатываний")
+			comparePenalty(t, "одиночки", g.Lonely.Penalty, pen)
+
+			t.Logf("%s: огрызки %d, виражи %d, окна %d, одиночки %d — совпало",
+				g.UID, g.Stubs.Hits, g.Lateral.Hits, g.SpeedWin.Hits, g.Lonely.Hits)
+		})
+	}
+}
