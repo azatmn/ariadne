@@ -527,3 +527,78 @@ func TestGolden_SplitMatchesPrototype(t *testing.T) {
 		})
 	}
 }
+
+// goldenReorder — порядок точек, восстановленный прототипом.
+type goldenReorder struct {
+	UID    string       `json:"uid"`
+	Points [][3]float64 `json:"points"`
+	Perm   []int        `json:"perm"`
+}
+
+func loadGoldenReorder(t *testing.T) []goldenReorder {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "reorder_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы перестановки не найдены")
+
+	out := make([]goldenReorder, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenReorder
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenReorder) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+func TestGolden_ReorderMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenReorder(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := g.points()
+			got := ReorderBatches(pts)
+			require.Len(t, got, len(g.Perm))
+
+			var diff int
+			firstAt := -1
+			for i := range got {
+				if got[i] != g.Perm[i] {
+					diff++
+					if firstAt < 0 {
+						firstAt = i
+					}
+				}
+			}
+			assert.Zero(t, diff,
+				"порядок разошёлся в %d позициях, первая — %d", diff, firstAt)
+
+			// И отдельно: километраж после перестановки обязан совпасть.
+			// Порядок внутри пачки мог бы отличаться при равных путях, но
+			// длина трека от этого не изменится.
+			goLen := pathOf(pts, got)
+			pyLen := pathOf(pts, g.Perm)
+			assert.InDelta(t, pyLen, goLen, 0.001,
+				"километраж после перестановки разошёлся")
+
+			moved := 0
+			for i := range got {
+				if got[i] != i {
+					moved++
+				}
+			}
+			t.Logf("%s: переставлено %d точек — совпало", g.UID, moved)
+		})
+	}
+}
