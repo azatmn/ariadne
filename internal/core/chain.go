@@ -62,8 +62,13 @@ func BanKey(a, b geo.Point) BanID {
 }
 
 func banCell(p geo.Point) (int, int) {
-	y := math.Round(p.Lat * 111320.0 / BanCellM)
-	x := math.Round(p.Lon * 111320.0 * math.Cos(p.Lat*math.Pi/180) / BanCellM)
+	// RoundToEven, а не Round: половинки округляются к чётному, как это делает
+	// питоновский round. Разница вылезает ровно на границах клеток — точка,
+	// попавшая на 2.5 клетки, уходит во вторую вместо третьей, — и даёт другой
+	// ключ запрета. На `4daf8725` из-за этого получалось 225 запретов вместо
+	// 223 у прототипа: две точки легли по разные стороны границы.
+	y := math.RoundToEven(p.Lat * 111320.0 / BanCellM)
+	x := math.RoundToEven(p.Lon * 111320.0 * math.Cos(p.Lat*math.Pi/180) / BanCellM)
 	return int(y), int(x)
 }
 

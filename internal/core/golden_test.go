@@ -2,11 +2,14 @@ package core
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -683,6 +686,119 @@ func TestGolden_ChainInvariants(t *testing.T) {
 			}
 			assert.GreaterOrEqual(t, sum, bestSingle-1e-9,
 				"цепочка легче одной лучшей точки — выбор неоптимален")
+		})
+	}
+}
+
+// goldenRoad — проверка по дорогам вместе с плёнкой ответов OSRM.
+//
+// Без плёнки сверка бессмысленна: Go спросил бы живой сервер, получил другие
+// числа, и любое расхождение списывалось бы на сеть. С плёнкой проверка
+// офлайновая и полностью повторяемая — и промах по плёнке сам по себе сигнал,
+// что Go спросил то, чего не спрашивал прототип.
+type goldenRoad struct {
+	UID     string              `json:"uid"`
+	Points  [][3]float64        `json:"points"`
+	Weights []float64           `json:"weights"`
+	Chain   []int               `json:"chain"`
+	Bans    []goldenBan         `json:"bans"`
+	Penalty map[string]float64  `json:"penalty"`
+	Tape    map[string]*float64 `json:"tape"`
+	Added   int                 `json:"added"`
+}
+
+type goldenBan struct {
+	From [2]int  `json:"from"`
+	To   [2]int  `json:"to"`
+	Need float64 `json:"need"`
+}
+
+func loadGoldenRoad(t *testing.T) []goldenRoad {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "road_*.json.gz"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "золотые векторы проверки по дорогам не найдены")
+
+	out := make([]goldenRoad, 0, len(paths))
+	for _, p := range paths {
+		f, err := os.Open(p)
+		require.NoError(t, err)
+		zr, err := gzip.NewReader(f)
+		require.NoError(t, err)
+		var g goldenRoad
+		require.NoError(t, json.NewDecoder(zr).Decode(&g), "разбор %s", p)
+		require.NoError(t, zr.Close())
+		require.NoError(t, f.Close())
+		out = append(out, g)
+	}
+	return out
+}
+
+func (g goldenRoad) points() []geo.Point {
+	pts := make([]geo.Point, len(g.Points))
+	for i, p := range g.Points {
+		pts[i] = geo.Point{Time: time.Unix(int64(p[0]), 0).UTC(), Lon: p[1], Lat: p[2]}
+	}
+	return pts
+}
+
+// tapeRoads отвечает из записи, а при промахе валит тест: спросить то, чего
+// прототип не спрашивал, — само по себе расхождение.
+type tapeRoads struct {
+	t    *testing.T
+	tape map[string]*float64
+	miss int
+}
+
+func (r *tapeRoads) PairDistance(_ context.Context, pairs []Pair) ([]float64, []bool, []string) {
+	dist := make([]float64, len(pairs))
+	ok := make([]bool, len(pairs))
+	for i, p := range pairs {
+		key := fmt.Sprintf("%.5f,%.5f;%.5f,%.5f", p.A.Lon, p.A.Lat, p.B.Lon, p.B.Lat)
+		v, found := r.tape[key]
+		if !found {
+			r.miss++
+			continue
+		}
+		if v != nil {
+			dist[i], ok[i] = *v, true
+		}
+	}
+	return dist, ok, nil
+}
+
+func TestGolden_RoadCheckMatchesPrototype(t *testing.T) {
+	for _, g := range loadGoldenRoad(t) {
+		t.Run(g.UID, func(t *testing.T) {
+			pts := g.points()
+			roads := &tapeRoads{t: t, tape: g.Tape}
+			st := NewRoadState()
+
+			added := CheckByRoad(context.Background(), roads, pts, g.Chain, st)
+
+			assert.Zero(t, roads.miss,
+				"Go спросил %d пар, которых прототип не спрашивал", roads.miss)
+			assert.Equal(t, g.Added, added, "число новых запретов разошлось")
+
+			// Запреты: те же переходы и то же требуемое время.
+			require.Len(t, st.Banned, len(g.Bans), "число запретов разошлось")
+			for _, b := range g.Bans {
+				key := BanID{fromY: b.From[0], fromX: b.From[1], toY: b.To[0], toX: b.To[1]}
+				need, found := st.Banned[key]
+				require.True(t, found, "запрет %v потерян", key)
+				assert.InDelta(t, b.Need, need, 1e-6, "требуемое время разошлось")
+			}
+
+			// Штрафы: те же точки и те же величины.
+			require.Len(t, st.Penalty, len(g.Penalty), "число наказанных точек разошлось")
+			for k, want := range g.Penalty {
+				i, err := strconv.Atoi(k)
+				require.NoError(t, err)
+				assert.InDelta(t, want, st.Penalty[i], 1e-9, "штраф точки %d разошёлся", i)
+			}
+
+			t.Logf("%s: запретов %d, наказано %d точек, плёнка %d пар — совпало",
+				g.UID, len(st.Banned), len(st.Penalty), len(g.Tape))
 		})
 	}
 }
