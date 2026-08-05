@@ -120,6 +120,14 @@ type Report struct {
 	SnapMedian   float64
 	KmBefore     float64
 	KmAfter      float64
+
+	// Stops — уцелевшие точки, представляющие стоянки, в нумерации ВХОДА.
+	//
+	// Нужны стадиям после ядра. Упрощению — чтобы не снять их геометрией:
+	// схлопнутая стоянка лежит почти на прямой между въездом и выездом, и RDP
+	// её убирает, хотя она несёт смысл помимо формы (машина стояла 32 минуты).
+	// Дорисовке — чтобы не рисовать дорогу внутри стоянки: там никто не ехал.
+	Stops []int
 }
 
 // stopFacts — что ядро узнало о стоянках, прежде чем строить веса.
@@ -267,6 +275,10 @@ func (c *Core) Run(ctx context.Context, pts []geo.Point) ([]int, Report, error) 
 	for k, i := range chain {
 		kept[k] = sub[i]
 		keepAlive[k] = alive[i]
+		// Ключи `observed` — это ровно позиции схлопнутых стоянок в `sub`.
+		if _, isStop := facts.observed[i]; isStop {
+			rep.Stops = append(rep.Stops, perm[alive[i]])
+		}
 	}
 	rep.Dropped = len(sub) - len(chain)
 	rep.KmAfter = geo.TotalLength(kept) / 1000
