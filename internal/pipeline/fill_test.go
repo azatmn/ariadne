@@ -582,3 +582,46 @@ func TestFill_CancelStopsAsking(t *testing.T) {
 	assert.Less(t, asked, gaps, "после отмены спрошено %d дыр из %d", asked, gaps)
 	t.Logf("спрошено %d дыр из %d", asked, gaps)
 }
+
+func TestFill_DrawnCopyOfObservationIsRemoved(t *testing.T) {
+	// Дорисованный путь начинается ровно там же, где кончается наблюдение:
+	// маршрутизатор отдаёт первой вершиной посаженный на дорогу конец, а мы
+	// этот же конец в наблюдение и записываем. Получается точка-двойник —
+	// то же время, те же координаты, но помеченная выдуманной.
+	//
+	// Её надо снять. Защищать наблюдения ПО ЗНАЧЕНИЮ здесь нельзя: двойник
+	// неотличим от оригинала, попадает под защиту и остаётся в треке
+	// дубликатом. Найдено сверкой с прототипом на `5f5dd0f1`.
+	pts := gapTrack(20000, 1800)
+
+	src := &fakeRoutes{route: func(a, b geo.Point) *osrm.Route {
+		// Первая ВНУТРЕННЯЯ вершина совпадает с началом пути.
+		coords := [][2]float64{
+			{a.Lon, a.Lat},
+			{a.Lon, a.Lat}, // двойник наблюдения
+			{(a.Lon + b.Lon) / 2, a.Lat + 0.01},
+			{b.Lon, b.Lat},
+		}
+		return &osrm.Route{
+			Distance: geo.Haversine(a, b) * 1.2,
+			Coords:   coords,
+			SnapA:    coords[0],
+			SnapB:    coords[len(coords)-1],
+			HasSnapA: true,
+			HasSnapB: true,
+		}
+	}}
+
+	st := &RunState{}
+	got, _, err := FillGaps{Routes: src, State: st}.Apply(context.Background(), pts)
+	require.NoError(t, err)
+
+	seen := map[PointKey]int{}
+	for _, p := range got {
+		seen[KeyOf(p)]++
+	}
+	for k, n := range seen {
+		assert.Equal(t, 1, n, "точка %v попала в трек %d раза", k, n)
+	}
+	assert.False(t, st.Synthetic[0], "первая точка — наблюдение")
+}

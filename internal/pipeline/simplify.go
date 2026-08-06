@@ -40,8 +40,30 @@ func (Simplify) Name() string { return "simplify" }
 type span struct{ start, end int }
 
 func (s Simplify) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []string, error) {
+	kept := simplifyKeep(points, s.MinMeters, func(i int) bool { return s.must(points[i]) })
+
+	out := make([]geo.Point, len(kept))
+	for k, i := range kept {
+		out[k] = points[i]
+	}
+	return out, nil, nil
+}
+
+// simplifyKeep — какие точки оставить. Возвращает ИНДЕКСЫ.
+//
+// Обязательные точки задаются предикатом по позиции, а не набором значений, и
+// это принципиально. Дорисовка зовёт то же упрощение, чтобы проредить
+// геометрию от маршрутизатора, и там начало пути совпадает с концом
+// предыдущего наблюдения байт в байт — то же время, те же координаты. Опознание
+// «по значению» защитило бы и эту копию, и она осталась бы в треке дубликатом.
+// Найдено сверкой с прототипом на `5f5dd0f1`.
+func simplifyKeep(points []geo.Point, minMeters float64, must func(i int) bool) []int {
 	if len(points) <= 2 {
-		return points, nil, nil
+		all := make([]int, len(points))
+		for i := range all {
+			all[i] = i
+		}
+		return all
 	}
 
 	keep := make([]bool, len(points))
@@ -51,7 +73,7 @@ func (s Simplify) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []s
 	// опорами трек упрощается независимо.
 	anchors := []int{0}
 	for i := 1; i < len(points)-1; i++ {
-		if s.must(points[i]) {
+		if must != nil && must(i) {
 			keep[i] = true
 			anchors = append(anchors, i)
 		}
@@ -77,7 +99,11 @@ func (s Simplify) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []s
 				maxDist, maxIdx = d, i
 			}
 		}
-		if maxDist <= s.MinMeters {
+		// Сравнение НЕСТРОГОЕ, и это не вкусовщина: при строгом участок, все
+		// точки которого лежат на хорде (расстояние ровно ноль), не отсекается,
+		// самой удалённой оказывается его собственный левый конец, и тот же
+		// участок кладётся в стек снова — цикл не заканчивается никогда.
+		if maxDist <= minMeters {
 			continue // весь участок укладывается в допуск — держим только концы
 		}
 
@@ -85,13 +111,13 @@ func (s Simplify) Apply(_ context.Context, points []geo.Point) ([]geo.Point, []s
 		stack = append(stack, span{cur.start, maxIdx}, span{maxIdx, cur.end})
 	}
 
-	result := make([]geo.Point, 0, len(points))
+	out := make([]int, 0, len(points))
 	for i, k := range keep {
 		if k {
-			result = append(result, points[i])
+			out = append(out, i)
 		}
 	}
-	return result, nil, nil
+	return out
 }
 
 // must — обязана ли точка уцелеть независимо от геометрии.
