@@ -44,6 +44,16 @@ type RunState struct {
 
 	// Report — что ядро сделало с треком.
 	Report core.Report
+
+	// BeforePacking — трек, каким он вышел из ядра.
+	//
+	// Нужен стражу достижимости: упаковка судит по геометрии и может создать
+	// переход, который физически не проехать. Сравнить не с чем, если не
+	// помнить, что было до неё.
+	BeforePacking []geo.Point
+
+	// Guarded — сколько точек страж вернул обратно.
+	Guarded int
 }
 
 // Core — стадия чистки. Без движка пропускает точки насквозь: сервис должен
@@ -73,6 +83,8 @@ func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []str
 	if c.State != nil {
 		// Блокнот описывает ОДИН прогон: пишем поверх, а не поверх прошлого.
 		c.State.Report = rep
+		c.State.BeforePacking = out
+		c.State.Guarded = 0
 		c.State.Must = make(map[PointKey]struct{}, len(rep.Stops))
 		for _, i := range rep.Stops {
 			c.State.Must[KeyOf(points[i])] = struct{}{}
