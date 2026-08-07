@@ -1,6 +1,8 @@
 package debugapi
 
 import (
+	"ariadne/internal/osrm"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -41,13 +43,13 @@ func testConfig() *config.Config {
 func testHandler() http.HandlerFunc {
 	logger := slog.Default()
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	return api.ErrorMiddleware(logger)(h.HandleResolve)
 }
 
 func testHandlerWithConfig(cfg *config.Config) http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	return api.ErrorMiddleware(logger)(h.HandleResolve)
 }
 
@@ -59,6 +61,41 @@ func testRoute(t *testing.T) string {
 		{Time: t0.Add(10 * time.Second), Lon: 37.617400, Lat: 55.755900},
 		{Time: t0.Add(20 * time.Second), Lon: 37.617500, Lat: 55.756000},
 		{Time: t0.Add(30 * time.Second), Lon: 37.617600, Lat: 55.756100},
+	}
+	encoded, err := codec.Encode(points)
+	require.NoError(t, err)
+	return encoded
+}
+
+// longRoute — обычный перегон: сорок точек через минуту, около километра шаг.
+func longRoute(t *testing.T) string {
+	t.Helper()
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	points := make([]geo.Point, 40)
+	for i := range points {
+		points[i] = geo.Point{
+			Time: t0.Add(time.Duration(i) * time.Minute),
+			Lon:  37.6173 + float64(i)*0.01,
+			Lat:  55.7558,
+		}
+	}
+	encoded, err := codec.Encode(points)
+	require.NoError(t, err)
+	return encoded
+}
+
+// sameSpotRoute — маршрут, все точки которого стоят на одном месте.
+// После схлопывания дублей от него остаётся одна точка, то есть маршрута нет.
+func sameSpotRoute(t *testing.T) string {
+	t.Helper()
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	points := make([]geo.Point, 4)
+	for i := range points {
+		points[i] = geo.Point{
+			Time: t0.Add(time.Duration(i) * time.Second),
+			Lon:  37.617300,
+			Lat:  55.755800,
+		}
 	}
 	encoded, err := codec.Encode(points)
 	require.NoError(t, err)
@@ -132,9 +169,39 @@ func TestHandlerTooManyPoints(t *testing.T) {
 	assert.Equal(t, api.CodeRouteTooLarge, payload.Error.Code)
 }
 
+// stubRouter — настроенный маршрутизатор, который ничего не знает о дорогах.
+//
+// Нужен, чтобы конвейер был ПОЛНЫМ: с nil-маршрутизатором чистка и дорисовка
+// честно предупреждают, что их пропустили, и проверять «предупреждений нет»
+// на таком составе бессмысленно.
+type stubRouter struct{}
+
+func (stubRouter) Snap(_ context.Context, pts []geo.Point) ([]float64, []bool, []string) {
+	snaps, ok := make([]float64, len(pts)), make([]bool, len(pts))
+	for i := range pts {
+		snaps[i], ok[i] = 5, true
+	}
+	return snaps, ok, nil
+}
+
+func (stubRouter) PairDistance(_ context.Context, pairs []osrm.Pair) ([]float64, []bool, []string) {
+	return make([]float64, len(pairs)), make([]bool, len(pairs)), nil
+}
+
+func (stubRouter) RouteGeometry(context.Context, geo.Point, geo.Point) (*osrm.Route, bool) {
+	return nil, false
+}
+
 func TestHandlerNoWarningsWhenClean(t *testing.T) {
-	handler := testHandler()
-	body := `{"routeCompressed":"` + testRoute(t) + `"}`
+	// Маршрутизатор настроен, маршрут обычный — предупреждать не о чем.
+	//
+	// Трек длиннее прежнего намеренно: на четырёх точках правила по цепочке
+	// срабатывают на вырожденности (каждый кусок формально огрызок), и тест
+	// мерил бы не то.
+	cfg := testConfig()
+	h := NewHandler(service.New(cfg, stubRouter{}), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	handler := api.ErrorMiddleware(slog.Default())(h.HandleResolve)
+	body := `{"routeCompressed":"` + longRoute(t) + `"}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/routes/resolve-collisions", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler(w, r)
@@ -164,11 +231,13 @@ func TestHandlerTimeout(t *testing.T) {
 }
 
 func TestHandlerTooFewPointsAfterPipeline(t *testing.T) {
+	// Маршрут из точек, стоящих на одном месте: дедуп схлопывает их в одну, и
+	// отдавать нечего. Прежде здесь занижался порог скорости, но фильтра
+	// скорости в составе больше нет.
 	cfg := testConfig()
-	cfg.MaxSpeedKmh = 0.001
 	handler := testHandlerWithConfig(cfg)
 
-	body := `{"routeCompressed":"` + testRoute(t) + `"}`
+	body := `{"routeCompressed":"` + sameSpotRoute(t) + `"}`
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler(w, r)
@@ -182,7 +251,7 @@ func TestHandlerTooFewPointsAfterPipeline(t *testing.T) {
 func TestHandlerMaxBytesError(t *testing.T) {
 	logger := slog.Default()
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 	handler := api.LimitBody(50)(api.ErrorMiddleware(logger)(h.HandleResolve))
 
 	bigBody := `{"routeCompressed":"` + strings.Repeat("x", 100) + `"}`

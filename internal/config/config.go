@@ -32,6 +32,14 @@ type Config struct {
 	StopMinPoints         int
 	AnchorToleranceMeters float64
 
+	// OSRM — маршрутизатор, на котором держится вся чистка: снэпы дают вес
+	// точке, расстояния по дорогам проверяют переходы, геометрия дорисовывает
+	// дыры. Пустой адрес — чистка и дорисовка пропускают трек насквозь с
+	// предупреждением, сервис при этом работает.
+	OSRMURL         string
+	OSRMTimeout     time.Duration
+	OSRMMaxParallel int
+
 	// Redis (async: очередь задач + хранилище результатов)
 	RedisAddr     string
 	RedisDB       int
@@ -79,6 +87,10 @@ func Load() (*Config, error) {
 		StopMinPoints:         envInt("STOP_MIN_POINTS", 5),
 		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
 		AnchorToleranceMeters: envFloat("ANCHOR_BACKTRACK_TOLERANCE_METERS", 0), // 0 = якорный фильтр выключен
+
+		OSRMURL:         envStr("OSRM_URL", ""),
+		OSRMTimeout:     envDuration("OSRM_TIMEOUT", 30*time.Second),
+		OSRMMaxParallel: envInt("OSRM_MAX_PARALLEL", 16),
 
 		// Redis (async: очередь + хранилище результатов)
 		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),
