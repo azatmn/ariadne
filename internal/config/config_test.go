@@ -87,3 +87,32 @@ func TestLoadInvalidBoolFallsBackToDefault(t *testing.T) {
 	assert.Equal(t, false, cfg.SwaggerEnabled, "SwaggerEnabled")
 	assert.Equal(t, false, cfg.GRPCReflection, "GRPCReflection")
 }
+
+func TestLoadOSRMDefaults(t *testing.T) {
+	// Повторы по умолчанию НЕ ноль. Ноль означает «не повторять вовсе», и
+	// тогда один моргнувший запрос оставляет дыру недорисованной: километраж
+	// занижается молча, без единого признака.
+	t.Setenv("OSRM_URL", "")
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, cfg.OSRMRetries)
+	assert.Equal(t, 16, cfg.OSRMMaxParallel)
+	assert.Equal(t, 30*time.Second, cfg.OSRMTimeout)
+	assert.Empty(t, cfg.OSRMURL, "пустой адрес — рабочее состояние, не ошибка")
+}
+
+func TestLoadOSRMFromEnv(t *testing.T) {
+	t.Setenv("OSRM_URL", "http://osrm:5000")
+	t.Setenv("OSRM_RETRIES", "5")
+	t.Setenv("OSRM_MAX_PARALLEL", "3")
+	t.Setenv("OSRM_TIMEOUT", "12s")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "http://osrm:5000", cfg.OSRMURL)
+	assert.Equal(t, 5, cfg.OSRMRetries)
+	assert.Equal(t, 3, cfg.OSRMMaxParallel)
+	assert.Equal(t, 12*time.Second, cfg.OSRMTimeout)
+}

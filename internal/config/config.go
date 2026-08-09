@@ -40,6 +40,16 @@ type Config struct {
 	OSRMTimeout     time.Duration
 	OSRMMaxParallel int
 
+	// OSRMRetries — сколько раз повторяем запрос, упавший по ВРЕМЕННОЙ причине
+	// (сеть моргнула, 5xx, таймаут). Отказы по существу (400, 404, 414) не
+	// повторяются никогда: ответ от этого не изменится.
+	//
+	// Ноль означает «не повторять вовсе», и это опасное значение по умолчанию:
+	// один моргнувший запрос оставляет дыру недорисованной, километраж
+	// занижается, и никто об этом не узнаёт. Пауза между попытками растёт
+	// (0.2 с, 0.4 с) со случайной добавкой, так что двух повторов хватает.
+	OSRMRetries int
+
 	// Redis (async: очередь задач + хранилище результатов)
 	RedisAddr     string
 	RedisDB       int
@@ -91,6 +101,7 @@ func Load() (*Config, error) {
 		OSRMURL:         envStr("OSRM_URL", ""),
 		OSRMTimeout:     envDuration("OSRM_TIMEOUT", 30*time.Second),
 		OSRMMaxParallel: envInt("OSRM_MAX_PARALLEL", 16),
+		OSRMRetries:     envInt("OSRM_RETRIES", 2),
 
 		// Redis (async: очередь + хранилище результатов)
 		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),

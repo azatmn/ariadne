@@ -6,9 +6,6 @@
 package main
 
 import (
-	"ariadne/internal/osrm"
-	"ariadne/internal/pipeline"
-	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,7 +31,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
-	svc := service.New(cfg, newRouter(cfg, logger))
+	svc := service.New(cfg, service.NewRouter(cfg, logger))
 	h := debugapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 
 	// Middleware переиспользуем из internal/api (Recover/RequestID/Logger/LimitBody).
@@ -54,37 +51,4 @@ func main() {
 		logger.Error("debug server failed", "error", err)
 		os.Exit(1)
 	}
-}
-
-// newRouter поднимает клиент маршрутизатора.
-//
-// Возвращает nil, если адрес не задан: сервис обязан работать и без OSRM —
-// чистка и дорисовка тогда пропускают трек насквозь и предупреждают об этом.
-// Связь проверяем сразу: сервис, который не может достучаться до
-// маршрутизатора, должен сказать это в логе на старте, а не выяснять на
-// первой же задаче, когда разбираться будет некому.
-func newRouter(cfg *config.Config, logger *slog.Logger) pipeline.Router {
-	if cfg.OSRMURL == "" {
-		logger.Warn("OSRM_URL is empty: cleaning and gap filling disabled")
-		return nil
-	}
-
-	client, err := osrm.New(osrm.Config{
-		BaseURL:        cfg.OSRMURL,
-		MaxParallel:    cfg.OSRMMaxParallel,
-		RequestTimeout: cfg.OSRMTimeout,
-	})
-	if err != nil {
-		logger.Error("osrm client init failed", "url", cfg.OSRMURL, "error", err)
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.OSRMTimeout)
-	defer cancel()
-	if err := client.Ping(ctx); err != nil {
-		logger.Error("osrm unreachable", "url", cfg.OSRMURL, "error", err)
-	} else {
-		logger.Info("osrm connected", "url", cfg.OSRMURL)
-	}
-	return client
 }

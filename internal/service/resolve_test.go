@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -104,4 +106,9 @@ func TestResolveBuildParams(t *testing.T) {
 	assert.Equal(t, 200.0, params.MaxSpeedKmh, "MaxSpeedKmh")
 	assert.Equal(t, 5.0, params.DedupDistanceMeters, "DedupDistanceMeters")
 	assert.Equal(t, 42.0, params.StopRadiusMeters, "StopRadiusMeters")
+}
+
+// testLogger — логгер, который никуда не пишет.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
