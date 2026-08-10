@@ -217,6 +217,7 @@ func (pl *Pipeline) extraOf(stage string) map[string]any {
 			"roadPasses":   r.RoadPasses,
 			"dropped":      r.Dropped,
 			"snapMedianM":  r.SnapMedian,
+			"snapFraction": r.SnapFraction,
 			"kmBefore":     r.KmBefore,
 			"kmAfter":      r.KmAfter,
 		}

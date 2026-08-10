@@ -764,13 +764,17 @@ func TestCore_MaskLengthMismatch(t *testing.T) {
 }
 
 func TestCore_ShortSnapAnswer(t *testing.T) {
-	// Клиент вернул меньше снэпов, чем точек: недостающие считаем молчанием.
+	// Клиент вернул меньше снэпов, чем точек. Выйти за границы среза нельзя
+	// ни при каком ответе снаружи — но и работать на таком ответе тоже: это
+	// ровно тот случай, ради которого стоит предохранитель.
 	pts := drive(20, 60, 10, 0, 0.01, 0)
 	core := &Core{Snap: &stubbySnapper{}, Road: &fakeRoads{}}
 
-	keep, _, err := core.Run(context.Background(), pts)
-	require.NoError(t, err)
-	assert.NotEmpty(t, keep)
+	var err error
+	assert.NotPanics(t, func() {
+		_, _, err = core.Run(context.Background(), pts)
+	})
+	assert.ErrorIs(t, err, ErrSnapsTooFew, "два снэпа на двадцать точек — неисправность")
 }
 
 type stubbySnapper struct{}
@@ -947,4 +951,87 @@ func TestCore_DirtyTrackNeedsMoreThanOnePass(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, rep.RoadPasses, 1, "на грязном треке одного прохода мало")
 	assert.LessOrEqual(t, rep.RoadPasses, RoadPasses)
+}
+
+// ------------------------------------------- предохранитель по доле снэпов
+
+// partialSnapper — снэпы приходят только для доли точек.
+type partialSnapper struct{ frac float64 }
+
+func (p partialSnapper) Snap(_ context.Context, pts []geo.Point) ([]float64, []bool, []string) {
+	snaps, ok := make([]float64, len(pts)), make([]bool, len(pts))
+	have := int(float64(len(pts))*p.frac + 0.5)
+	for i := range pts {
+		if i < have {
+			snaps[i], ok[i] = 5, true
+		}
+	}
+	return snaps, ok, nil
+}
+
+func TestCore_RefusesWhenTooFewSnaps(t *testing.T) {
+	// Вес точки без снэпа — ноль, то есть цепочке она безразлична. Значит при
+	// нехватке снэпов ядро оставляет ровно те точки, про которые ответил
+	// маршрутизатор, и километраж падает ПРОПОРЦИОНАЛЬНО: снэпов на половину
+	// точек — половина пробега, ноль снэпов — одна точка и ноль километров.
+	//
+	// Молчать об этом нельзя: по километражу считают деньги, а ошибка тут
+	// кратная и ничем себя не выдаёт.
+	pts := drive(200, 30, 10, 0, 0.002, 0)
+
+	_, _, err := (&Core{Snap: partialSnapper{frac: 0.5}, Road: &fakeRoads{}}).
+		Run(context.Background(), pts)
+
+	require.ErrorIs(t, err, ErrSnapsTooFew)
+	assert.Contains(t, err.Error(), "50", "в ошибке обязана быть доля: по ней и разбирают")
+}
+
+func TestCore_SnapFractionThreshold(t *testing.T) {
+	// Граница: на пороге ещё работаем, ниже — отказ. На настоящих треках доля
+	// ровно 100 % (замер по восьми маршрутам), поэтому любой заметный недобор
+	// — неисправность маршрутизатора, а не свойство данных.
+	pts := drive(200, 30, 10, 0, 0.002, 0)
+
+	for _, c := range []struct {
+		name    string
+		frac    float64
+		refuses bool
+	}{
+		{"всё ответили", 1.0, false},
+		{"ровно на пороге", SnapMinFraction, false},
+		{"чуть ниже порога", SnapMinFraction - 0.01, true},
+		{"не ответили вовсе", 0.0, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := (&Core{Snap: partialSnapper{frac: c.frac}, Road: &fakeRoads{}}).
+				Run(context.Background(), pts)
+			if c.refuses {
+				assert.ErrorIs(t, err, ErrSnapsTooFew)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestCore_NoSnapperIsNotAMalfunction(t *testing.T) {
+	// Источник снэпов не задан вовсе — это осознанная настройка (пустой
+	// OSRM_URL), а не поломка. Отказывать здесь нельзя: сервис в таком виде
+	// работает намеренно.
+	pts := drive(200, 30, 10, 0, 0.002, 0)
+
+	keep, _, err := (&Core{Road: &fakeRoads{}}).Run(context.Background(), pts)
+	require.NoError(t, err)
+	assert.NotEmpty(t, keep)
+}
+
+func TestCore_ReportsSnapFraction(t *testing.T) {
+	// Долю кладём в отчёт всегда, а не только при отказе: по ней видно, что
+	// маршрутизатор начал сбоить, ЕЩЁ ДО того как дойдёт до порога.
+	pts := drive(200, 30, 10, 0, 0.002, 0)
+
+	_, rep, err := (&Core{Snap: partialSnapper{frac: 1.0}, Road: &fakeRoads{}}).
+		Run(context.Background(), pts)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, rep.SnapFraction, 1e-9)
 }
