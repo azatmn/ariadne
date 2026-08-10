@@ -1,9 +1,27 @@
+# Сборка
+/server
+/bin/
+/dist/
+
+# Тесты и профилирование
 *.test
 *.out
+*.prof
+coverage.html
+
+# Окружение: в репозитории живёт только .env.example
 .env
 .env.local
+.env.*.local
+
+# Локальное
 .DS_Store
 .idea
+.vscode
 .claude
+
+# ТЗ тимлида — не наше, в репозиторий не кладём
 docs/
+
+# Генерируется `make swagger` из аннотаций в коде
 swagger/swagger.json
