@@ -21,18 +21,18 @@ type Stage interface {
 
 // Params — параметры запроса, которые могут переопределять дефолты конфига.
 // Заполняется api/handler из тела запроса.
+//
+// Здесь только то, что читает хотя бы одна стадия ИЗ ТЕКУЩЕГО состава. Пороги
+// четырёх снятых фильтров (якорь, телепорты, скорость, ускорение) убраны: поле,
+// которое никто не читает, выглядит рабочей ручкой и молча ничего не делает —
+// поставить по нему потолок скорости фуры и не добиться ничего хуже, чем не
+// найти настройки вовсе. Сами файлы стадий остаются в репозитории.
 type Params struct {
-	DedupDistanceMeters   float64
-	DedupTimeGap          time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
-	SimplifyMinMeters     float64
-	MaxSpeedKmh           float64
-	MaxAccelKmhPerSec     float64
-	TeleportJumpMeters    float64 // скачок больше этого = подозрение на телепорт-загон
-	TeleportReturnMeters  float64 // возврат ближе этого к точке перед скачком = вырезаем загон
-	TeleportMaxSpanMeters float64 // вырезаем загон только если его размах меньше этого
-	StopRadiusMeters      float64 // размер пятна стоянки для сворачивания
-	StopMinPoints         int     // от скольких точек в пятне считаем стоянкой
-	AnchorToleranceMeters float64 // порог отката для якорного фильтра; 0 = выключено
+	DedupDistanceMeters float64
+	DedupTimeGap        time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
+	SimplifyMinMeters   float64
+	StopRadiusMeters    float64 // размер пятна стоянки для сворачивания
+	StopMinPoints       int     // от скольких точек в пятне считаем стоянкой
 }
 
 type StageStats struct {

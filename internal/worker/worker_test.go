@@ -92,17 +92,12 @@ func (b *blockingResolver) Resolve(_ context.Context, points []geo.Point) (*serv
 
 func testConfig() *config.Config {
 	return &config.Config{
-		MaxPoints:             50000,
-		DedupDistanceMeters:   2.0,
-		DedupTimeGap:          60 * time.Second,
-		MaxSpeedKmh:           150,
-		MaxAccelKmhPerSec:     20,
-		TeleportJumpMeters:    15000,
-		TeleportReturnMeters:  2000,
-		TeleportMaxSpanMeters: 5000,
-		StopRadiusMeters:      50,
-		StopMinPoints:         5,
-		SimplifyMinMeters:     5.0,
+		MaxPoints:           50000,
+		DedupDistanceMeters: 2.0,
+		DedupTimeGap:        60 * time.Second,
+		StopRadiusMeters:    50,
+		StopMinPoints:       5,
+		SimplifyMinMeters:   5.0,
 	}
 }
 

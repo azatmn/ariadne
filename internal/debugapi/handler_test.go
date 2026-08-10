@@ -23,20 +23,15 @@ import (
 
 func testConfig() *config.Config {
 	return &config.Config{
-		DedupDistanceMeters:   2.0,
-		DedupTimeGap:          60 * time.Second,
-		SimplifyMinMeters:     2.0,
-		MaxPoints:             50000,
-		MaxSpeedKmh:           150,
-		MaxAccelKmhPerSec:     30,
-		TeleportJumpMeters:    15000,
-		TeleportReturnMeters:  2000,
-		TeleportMaxSpanMeters: 5000,
-		StopRadiusMeters:      50,
-		StopMinPoints:         5,
-		MaxBodyBytes:          10 << 20,
-		MaxDecompressedBytes:  100 << 20,
-		ResolveTimeout:        25 * time.Second,
+		DedupDistanceMeters:  2.0,
+		DedupTimeGap:         60 * time.Second,
+		SimplifyMinMeters:    2.0,
+		MaxPoints:            50000,
+		StopRadiusMeters:     50,
+		StopMinPoints:        5,
+		MaxBodyBytes:         10 << 20,
+		MaxDecompressedBytes: 100 << 20,
+		ResolveTimeout:       25 * time.Second,
 	}
 }
 

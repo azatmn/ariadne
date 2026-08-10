@@ -27,8 +27,8 @@ func TestLoadDefaults(t *testing.T) {
 		{"DedupDistanceMeters", cfg.DedupDistanceMeters, 2.0},
 		{"DedupTimeGap", cfg.DedupTimeGap, 60 * time.Second},
 		{"MaxPoints", cfg.MaxPoints, 50_000},
-		{"MaxSpeedKmh", cfg.MaxSpeedKmh, 150.0},
-		{"MaxAccelKmhPerSec", cfg.MaxAccelKmhPerSec, 20.0},
+		{"StopRadiusMeters", cfg.StopRadiusMeters, 50.0},
+		{"StopMinPoints", cfg.StopMinPoints, 5},
 		{"SimplifyMinMeters", cfg.SimplifyMinMeters, 5.0},
 		{"ResolveTimeout", cfg.ResolveTimeout, 25 * time.Second},
 		{"LogLevel", cfg.LogLevel, "info"},
@@ -45,7 +45,7 @@ func TestLoadCustomEnv(t *testing.T) {
 	t.Setenv("MAX_BODY_BYTES", "5242880")
 	t.Setenv("MAX_DECOMPRESSED_BYTES", "52428800")
 	t.Setenv("MAX_POINTS", "10000")
-	t.Setenv("MAX_SPEED_KMH", "200")
+	t.Setenv("STOP_RADIUS_METERS", "80")
 	t.Setenv("DEDUP_DISTANCE_METERS", "5.0")
 	t.Setenv("LOG_LEVEL", "debug")
 
@@ -57,14 +57,14 @@ func TestLoadCustomEnv(t *testing.T) {
 	assert.Equal(t, int64(5<<20), cfg.MaxBodyBytes, "MaxBodyBytes")
 	assert.Equal(t, int64(50<<20), cfg.MaxDecompressedBytes, "MaxDecompressedBytes")
 	assert.Equal(t, 10_000, cfg.MaxPoints, "MaxPoints")
-	assert.Equal(t, 200.0, cfg.MaxSpeedKmh, "MaxSpeedKmh")
+	assert.Equal(t, 80.0, cfg.StopRadiusMeters, "StopRadiusMeters")
 	assert.Equal(t, 5.0, cfg.DedupDistanceMeters, "DedupDistanceMeters")
 	assert.Equal(t, "debug", cfg.LogLevel, "LogLevel")
 }
 
 func TestLoadInvalidEnvFallsBackToDefault(t *testing.T) {
 	t.Setenv("MAX_POINTS", "abc")
-	t.Setenv("MAX_SPEED_KMH", "not-a-number")
+	t.Setenv("STOP_RADIUS_METERS", "not-a-number")
 	t.Setenv("READ_TIMEOUT", "10")
 	t.Setenv("MAX_BODY_BYTES", "xyz")
 
@@ -72,7 +72,7 @@ func TestLoadInvalidEnvFallsBackToDefault(t *testing.T) {
 	require.NoError(t, err, "Load")
 
 	assert.Equal(t, 50_000, cfg.MaxPoints, "MaxPoints")
-	assert.Equal(t, 150.0, cfg.MaxSpeedKmh, "MaxSpeedKmh")
+	assert.Equal(t, 50.0, cfg.StopRadiusMeters, "StopRadiusMeters")
 	assert.Equal(t, 10*time.Second, cfg.ReadTimeout, "ReadTimeout")
 	assert.Equal(t, int64(10<<20), cfg.MaxBodyBytes, "MaxBodyBytes")
 }

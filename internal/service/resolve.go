@@ -77,16 +77,10 @@ func (s *Service) Resolve(ctx context.Context, points []geo.Point) (*Result, err
 
 func (s *Service) buildParams() pipeline.Params {
 	return pipeline.Params{
-		DedupDistanceMeters:   s.cfg.DedupDistanceMeters,
-		DedupTimeGap:          s.cfg.DedupTimeGap,
-		MaxSpeedKmh:           s.cfg.MaxSpeedKmh,
-		MaxAccelKmhPerSec:     s.cfg.MaxAccelKmhPerSec,
-		TeleportJumpMeters:    s.cfg.TeleportJumpMeters,
-		TeleportReturnMeters:  s.cfg.TeleportReturnMeters,
-		TeleportMaxSpanMeters: s.cfg.TeleportMaxSpanMeters,
-		StopRadiusMeters:      s.cfg.StopRadiusMeters,
-		StopMinPoints:         s.cfg.StopMinPoints,
-		SimplifyMinMeters:     s.cfg.SimplifyMinMeters,
-		AnchorToleranceMeters: s.cfg.AnchorToleranceMeters,
+		DedupDistanceMeters: s.cfg.DedupDistanceMeters,
+		DedupTimeGap:        s.cfg.DedupTimeGap,
+		StopRadiusMeters:    s.cfg.StopRadiusMeters,
+		StopMinPoints:       s.cfg.StopMinPoints,
+		SimplifyMinMeters:   s.cfg.SimplifyMinMeters,
 	}
 }

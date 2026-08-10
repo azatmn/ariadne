@@ -25,24 +25,6 @@ const examplePath = "../../.env.example"
 // envLine — строка вида KEY=VALUE (KEY заглавными, с подчёркиваниями).
 var envLine = regexp.MustCompile(`^([A-Z][A-Z0-9_]*)=(.*)$`)
 
-// retired — переменные, которые Load ещё читает, а конвейер уже не использует:
-// пороги четырёх снятых фильтров (якорь, телепорты, скорость, ускорение). Они
-// доезжают до pipeline.Params и там никем не читаются.
-//
-// В `.env.example` их намеренно нет: строка в примере — это обещание ручки, а
-// эта ручка ни на что не влияет. Настроить по ней потолок скорости фуры и
-// ничего не добиться — хуже, чем не найти переменной вовсе.
-//
-// Список временный: как поля уйдут из Config, он опустеет вместе с ними.
-var retired = map[string]bool{
-	"ANCHOR_BACKTRACK_TOLERANCE_METERS": true,
-	"TELEPORT_JUMP_METERS":              true,
-	"TELEPORT_RETURN_METERS":            true,
-	"TELEPORT_MAX_SPAN_METERS":          true,
-	"MAX_SPEED_KMH":                     true,
-	"MAX_ACCEL_KMH_PER_SEC":             true,
-}
-
 func exampleLines(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile(examplePath)
@@ -110,9 +92,6 @@ func TestExampleCoversEveryEnvKey(t *testing.T) {
 	require.NotEmpty(t, inCode, "не нашли в config.go ни одного вызова env*(...) — сломался разбор")
 
 	for key := range inCode {
-		if retired[key] {
-			continue
-		}
 		assert.True(t, inFile[key], "%s читается кодом, но в .env.example его нет", key)
 	}
 	for key := range inFile {
