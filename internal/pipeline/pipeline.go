@@ -63,6 +63,25 @@ type Pipeline struct {
 // упаковка и дорисовка.
 func (pl *Pipeline) State() *RunState { return pl.state }
 
+// CoreBudgetShare — какую долю ОСТАВШЕГОСЯ бюджета отдаём чистке.
+//
+// Чистка самая дорогая: десятки запросов к маршрутизатору и до дюжины
+// перестроений цепочки. Без ограничения она съедает весь срок задачи, и
+// дорисовка не успевает ничего — а это те самые 5 % километража, ради которых
+// она и делалась.
+//
+// Замер: дорисовка на маршруте — сотня дыр, восемь потоков, 88 мс на запрос,
+// то есть около полутора секунд. Пятой части бюджета ей хватает с запасом.
+const CoreBudgetShare = 0.8
+
+// budgeted — стадия, которой нужен свой кусок общего бюджета.
+//
+// Интерфейс, а не проверка по имени: имя стадии — про лог, и завязывать на
+// него поведение значит сломать конвейер молча при первом переименовании.
+type budgeted interface {
+	BudgetShare() float64
+}
+
 // Router — всё, что конвейеру нужно от маршрутизатора.
 //
 // Интерфейс, а не клиент: так конвейер собирается и проверяется без сети, а
@@ -144,7 +163,9 @@ func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, [
 			warnings []string
 			err      error
 		)
-		points, warnings, err = s.Apply(ctx, points)
+		stageCtx, releaseStage := stageBudget(ctx, s)
+		points, warnings, err = s.Apply(stageCtx, points)
+		releaseStage()
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -193,6 +214,27 @@ func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, [
 	return points, allWarnings, stats, nil
 }
 
+// stageBudget выдаёт стадии её долю оставшегося времени.
+//
+// Стадиям без своей доли отдаётся общий контекст как есть — большинство их
+// вообще не ходит в сеть и укладывается в миллисекунды.
+func stageBudget(ctx context.Context, s Stage) (context.Context, context.CancelFunc) {
+	b, ok := s.(budgeted)
+	if !ok {
+		return ctx, func() {}
+	}
+	deadline, has := ctx.Deadline()
+	if !has {
+		return ctx, func() {}
+	}
+
+	left := time.Until(deadline)
+	if left <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Duration(float64(left)*b.BudgetShare()))
+}
+
 // extraOf — подробности стадии для разбора. Пусто у тех, кому рассказывать
 // нечего: сортировка и дедуп полностью описываются числом точек до и после.
 func (pl *Pipeline) extraOf(stage string) map[string]any {
@@ -218,6 +260,7 @@ func (pl *Pipeline) extraOf(stage string) map[string]any {
 			"dropped":      r.Dropped,
 			"snapMedianM":  r.SnapMedian,
 			"snapFraction": r.SnapFraction,
+			"degraded":     r.Degraded,
 			"kmBefore":     r.KmBefore,
 			"kmAfter":      r.KmAfter,
 		}
@@ -234,6 +277,7 @@ func (pl *Pipeline) extraOf(stage string) map[string]any {
 			"addedM":   f.AddedM,
 			"addedPts": f.AddedPts,
 			"reasons":  f.Reasons,
+			"degraded": f.Degraded,
 		}
 	}
 	return nil

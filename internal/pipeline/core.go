@@ -76,6 +76,10 @@ type Core struct {
 
 func (Core) Name() string { return "core" }
 
+// BudgetShare — доля оставшегося времени, которую забирает чистка.
+// Остальное достаётся дорисовке: см. CoreBudgetShare.
+func (Core) BudgetShare() float64 { return CoreBudgetShare }
+
 func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []string, error) {
 	if c.Engine == nil {
 		return points, []string{"core: движок не задан, чистка пропущена"}, nil

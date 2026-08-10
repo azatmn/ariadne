@@ -1035,3 +1035,97 @@ func TestCore_ReportsSnapFraction(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 1.0, rep.SnapFraction, 1e-9)
 }
+
+// ------------------------------------------------------------ бюджет времени
+
+// slowRoads — источник расстояний, съедающий время на каждом вопросе.
+type slowRoads struct{ each time.Duration }
+
+func (s slowRoads) PairDistance(ctx context.Context, pairs []Pair) ([]float64, []bool, []string) {
+	select {
+	case <-time.After(s.each):
+	case <-ctx.Done():
+	}
+	return make([]float64, len(pairs)), make([]bool, len(pairs)), nil
+}
+
+func TestCore_OutOfBudgetDegradesNotFails(t *testing.T) {
+	// Бюджет кончился посреди проходов. Цепочка при этом УЖЕ построена —
+	// проходы её лишь уточняют, — поэтому отдать её честнее, чем не отдать
+	// ничего: ошибка тут ограничена (невыловленные невозможные переходы,
+	// замер прототипа — 2 % километража), а отказ стоит всего результата.
+	//
+	// Это ровно обратный случай к нехватке снэпов: там ошибка КРАТНАЯ и
+	// ничем себя не выдаёт, поэтому там отказ.
+	pts := drive(200, 300, 10, 0, 0.03, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	core := &Core{Snap: flatSnaps(5), Road: slowRoads{each: 20 * time.Millisecond}}
+	keep, rep, err := core.Run(ctx, pts)
+
+	require.NoError(t, err, "исчерпанный бюджет — не повод не отвечать")
+	assert.NotEmpty(t, keep, "цепочка обязана быть отдана")
+	assert.True(t, rep.Degraded, "но о неполноте надо сказать")
+}
+
+func TestCore_CancelStillFails(t *testing.T) {
+	// Отмена — не то же самое, что исчерпанный бюджет. Бюджет кончился —
+	// ответ ждут, и лучше неполный. Отменили — ждать уже некому, считать
+	// дальше незачем.
+	pts := drive(200, 300, 10, 0, 0.03, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	core := &Core{Snap: flatSnaps(5), Road: &cancelRoads{cancel: cancel}}
+
+	_, _, err := core.Run(ctx, pts)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestCore_NotDegradedOnCleanRun(t *testing.T) {
+	// На нормальном прогоне пометки неполноты быть не должно: иначе она
+	// перестанет что-либо значить.
+	pts := drive(40, 60, 10, 0, 0.01, 0)
+	_, rep, err := (&Core{Snap: flatSnaps(5), Road: &fakeRoads{}}).
+		Run(context.Background(), pts)
+
+	require.NoError(t, err)
+	assert.False(t, rep.Degraded)
+}
+
+// slowSnapper — снэпы приходят, но съедают весь бюджет.
+type slowSnapper struct{ wait time.Duration }
+
+func (s slowSnapper) Snap(ctx context.Context, pts []geo.Point) ([]float64, []bool, []string) {
+	select {
+	case <-time.After(s.wait):
+	case <-ctx.Done():
+	}
+	snaps, ok := make([]float64, len(pts)), make([]bool, len(pts))
+	for i := range pts {
+		snaps[i], ok[i] = 5, true
+	}
+	return snaps, ok, nil
+}
+
+func TestCore_BudgetSpentOnSnapsDegrades(t *testing.T) {
+	// Бюджет ушёл на снэпы, до проверки переходов дело не дошло вовсе.
+	// Веса при этом есть — значит цепочку построить можно, и она честная,
+	// просто её переходы никто не проверял дорогами.
+	//
+	// Этот путь отличается от предыдущего: там срок кончался ПОСРЕДИ
+	// проходов, здесь — ещё ДО первого.
+	pts := drive(200, 300, 10, 0, 0.03, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	core := &Core{Snap: slowSnapper{wait: 40 * time.Millisecond}, Road: &fakeRoads{}}
+	keep, rep, err := core.Run(ctx, pts)
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, keep, "веса есть — цепочку строим")
+	assert.True(t, rep.Degraded, "но проходов не было, и об этом надо сказать")
+	assert.Zero(t, rep.RoadPasses, "ни одного прохода не сделали")
+}

@@ -314,3 +314,100 @@ func TestExtraOf_WithoutState(t *testing.T) {
 	pl := &Pipeline{stages: []Stage{SortByTime{}}}
 	assert.Nil(t, pl.extraOf("core"))
 }
+
+// ------------------------------------------------------------ бюджет времени
+
+func TestRun_CoreGetsShareNotWholeBudget(t *testing.T) {
+	// Чистка — самая дорогая стадия: она ходит в маршрутизатор десятками
+	// запросов и перестраивает цепочку до дюжины раз. Отдай ей весь бюджет —
+	// дорисовке не останется ничего, и километраж потеряет свои 5 %.
+	//
+	// Проверяем, что ядру приходит СВОЙ, более короткий срок.
+	pl := New(Params{SimplifyMinMeters: 5}, pipeRouter{})
+
+	var coreAt, fillAt time.Time
+	for i, s := range pl.stages {
+		switch s.(type) {
+		case Core:
+			pl.stages[i] = deadlineSpy{name: "core", at: &coreAt, inner: s}
+		case FillGaps:
+			// Обёртка БЕЗ своей доли — как и сама дорисовка. Дай ей долю, и
+			// тест перестал бы отличать «доля только ядру» от «доля всем».
+			pl.stages[i] = plainSpy{name: "fill_gaps", at: &fillAt, inner: s}
+		}
+	}
+
+	const budget = 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	outer, _ := ctx.Deadline()
+
+	_, _, _, err := pl.Run(ctx, road(40, 60, 10, 0, 0.01, 0))
+	require.NoError(t, err)
+
+	// Ядру — свой, более ранний срок.
+	require.False(t, coreAt.IsZero(), "ядру обязан прийти срок")
+	assert.True(t, coreAt.Before(outer), "и он раньше общего")
+	assert.True(t, coreAt.After(time.Now()), "но не в прошлом")
+
+	// А дорисовке — общий, без укорачивания. Иначе она получала бы долю от
+	// доли и на длинных треках не успевала бы ничего.
+	require.False(t, fillAt.IsZero())
+	assert.WithinDuration(t, outer, fillAt, time.Millisecond,
+		"дорисовке свой срок не выдаём: ей остаётся весь хвост бюджета")
+}
+
+func TestRun_NoDeadlineNoSubBudget(t *testing.T) {
+	// Без срока снаружи делить нечего: своего срока стадиям не выдаём.
+	pl := New(Params{SimplifyMinMeters: 5}, pipeRouter{})
+
+	var coreAt time.Time
+	for i, s := range pl.stages {
+		if _, ok := s.(Core); ok {
+			pl.stages[i] = deadlineSpy{name: "core", at: &coreAt, inner: s}
+		}
+	}
+
+	_, _, _, err := pl.Run(context.Background(), road(40, 60, 10, 0, 0.01, 0))
+	require.NoError(t, err)
+	assert.True(t, coreAt.IsZero(), "срока быть не должно")
+}
+
+// deadlineSpy — обёртка, запоминающая срок, с которым стадию позвали.
+type deadlineSpy struct {
+	name  string
+	at    *time.Time
+	inner Stage
+}
+
+func (d deadlineSpy) Name() string { return d.name }
+
+func (d deadlineSpy) Apply(ctx context.Context, pts []geo.Point) ([]geo.Point, []string, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		*d.at = dl
+	}
+	return d.inner.Apply(ctx, pts)
+}
+
+// BudgetShare прокидывается насквозь: обёртка не должна менять то, что она
+// оборачивает, иначе тест мерил бы не ту стадию.
+func (d deadlineSpy) BudgetShare() float64 {
+	return d.inner.(budgeted).BudgetShare()
+}
+
+// plainSpy — то же, но БЕЗ своей доли бюджета: для стадий, которым доля не
+// положена.
+type plainSpy struct {
+	name  string
+	at    *time.Time
+	inner Stage
+}
+
+func (p plainSpy) Name() string { return p.name }
+
+func (p plainSpy) Apply(ctx context.Context, pts []geo.Point) ([]geo.Point, []string, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		*p.at = dl
+	}
+	return p.inner.Apply(ctx, pts)
+}

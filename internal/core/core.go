@@ -149,8 +149,19 @@ type Report struct {
 	Dropped      int
 	SnapMedian   float64
 	SnapFraction float64 // доля точек, про которые маршрутизатор ответил
-	KmBefore     float64
-	KmAfter      float64
+
+	// Degraded — бюджет кончился раньше, чем сошлись проходы.
+	//
+	// Цепочка при этом построена: проходы её лишь уточняют, запрещая
+	// невозможные переходы. Значит отдать её честнее, чем не отдать ничего —
+	// ошибка ограничена (у прототипа невыловленные переходы это 2 %
+	// километража), а отказ стоит всего результата.
+	//
+	// Обратный случай — нехватка снэпов: там ошибка КРАТНАЯ и ничем себя не
+	// выдаёт, поэтому там отказ, см. ErrSnapsTooFew.
+	Degraded bool
+	KmBefore float64
+	KmAfter  float64
 
 	// Stops — уцелевшие точки, представляющие стоянки, в нумерации ВХОДА.
 	//
@@ -406,7 +417,10 @@ func (c *Core) pick(
 	wp := make([]float64, n)
 
 	for pass := range RoadPasses {
-		if err := ctx.Err(); err != nil {
+		if stop, err := budgetSpent(ctx); stop {
+			rep.Degraded = true
+			break
+		} else if err != nil {
 			return nil, err
 		}
 		rep.RoadPasses = pass + 1
@@ -431,11 +445,14 @@ func (c *Core) pick(
 
 		rep.Loops += loops
 
-		// Дедлайн проверяем ещё раз, уже ПОСЛЕ правил. С отменённым контекстом
+		// Дедлайн проверяем ещё раз, уже ПОСЛЕ правил. С мёртвым контекстом
 		// сетевые правила молча возвращают ноль, и цикл принял бы это за
-		// «нарушений нет» — то есть выдал бы недосчитанный километраж как
-		// готовый ответ. Молчание из-за отмены не то же самое, что чистый трек.
-		if err := ctx.Err(); err != nil {
+		// «нарушений нет» — то есть счёл бы трек сошедшимся. Молчание из-за
+		// исчерпанного бюджета не то же самое, что чистый трек.
+		if stop, err := budgetSpent(ctx); stop {
+			rep.Degraded = true
+			break
+		} else if err != nil {
 			return nil, err
 		}
 
@@ -452,6 +469,24 @@ func (c *Core) pick(
 	rep.RoadBanned = len(st.Banned)
 	rep.RoadAsked = len(st.asked) + len(st.loops)
 	return chain, nil
+}
+
+// budgetSpent — можно ли продолжать считать.
+//
+// Различает два случая, которые легко спутать:
+//
+//	бюджет кончился  ответа ЖДУТ, и неполный лучше никакого → (true, nil)
+//	отменили         ждать уже некому, считать дальше незачем → (false, err)
+func budgetSpent(ctx context.Context) (bool, error) {
+	err := ctx.Err()
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, context.DeadlineExceeded):
+		return true, nil
+	default:
+		return false, err
+	}
 }
 
 // buildWeights собирает веса точек перед выбором цепочки.

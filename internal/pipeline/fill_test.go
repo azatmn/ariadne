@@ -625,3 +625,67 @@ func TestFill_DrawnCopyOfObservationIsRemoved(t *testing.T) {
 	}
 	assert.False(t, st.Synthetic[0], "первая точка — наблюдение")
 }
+
+// ----------------------------------------------------------- бюджет времени
+
+// slowRoutes — источник путей, съедающий время на каждом вопросе.
+type slowRoutes struct {
+	each time.Duration
+	in   *fakeRoutes
+}
+
+func (s *slowRoutes) RouteGeometry(ctx context.Context, a, b geo.Point) (*osrm.Route, bool) {
+	select {
+	case <-time.After(s.each):
+	case <-ctx.Done():
+		return nil, false
+	}
+	return s.in.RouteGeometry(ctx, a, b)
+}
+
+func TestFill_OutOfBudgetKeepsWhatItDrew(t *testing.T) {
+	// Бюджет кончился посреди опроса. Недоспрошенные дыры остаются прямыми —
+	// то есть километраж занижен, но ровно так же он был занижен и без
+	// дорисовки вовсе. Это ограниченная и понятная потеря, поэтому отдаём
+	// что успели, а не валим задачу целиком.
+	pts := multiGapTrack(40)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	src := &slowRoutes{each: 15 * time.Millisecond, in: routesWith(1.2, 3)}
+	st := &RunState{}
+
+	got, warns, err := FillGaps{Routes: src, State: st}.Apply(ctx, pts)
+
+	require.NoError(t, err, "исчерпанный бюджет — не повод не отвечать")
+	assert.NotEmpty(t, got)
+	assert.True(t, st.Fill.Degraded, "о неполноте надо сказать")
+	assert.Less(t, st.Fill.Filled, st.Fill.Gaps, "часть дыр осталась прямыми")
+
+	joined := ""
+	for _, w := range warns {
+		joined += w
+	}
+	assert.Contains(t, joined, "бюджет", "предупреждение обязано быть внятным")
+}
+
+func TestFill_CancelStillFails(t *testing.T) {
+	// Отмена — не исчерпанный бюджет: ждать уже некому.
+	pts := multiGapTrack(50)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	src := &cancelRoutes{cancel: cancel, inner: routesWith(1.2, 3)}
+
+	_, _, err := FillGaps{Routes: src, State: &RunState{}}.Apply(ctx, pts)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestFill_NotDegradedOnCleanRun(t *testing.T) {
+	pts := multiGapTrack(10)
+	st := &RunState{}
+
+	_, _, err := FillGaps{Routes: routesWith(1.2, 3), State: st}.Apply(context.Background(), pts)
+	require.NoError(t, err)
+	assert.False(t, st.Fill.Degraded)
+}

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -107,6 +108,13 @@ type FillReport struct {
 	AddedM   float64 // прибавка к километражу, метры
 	AddedPts int     // сколько точек добавлено
 	Reasons  map[string]int
+
+	// Degraded — бюджет кончился раньше, чем спросили про все дыры.
+	//
+	// Недоспрошенные остаются прямыми: километраж занижен ровно так же, как
+	// был бы занижен без дорисовки вовсе. Потеря ограниченная и понятная,
+	// поэтому отдаём что успели, а не валим задачу целиком.
+	Degraded bool
 }
 
 // FillGaps — стадия дорисовки.
@@ -142,10 +150,11 @@ func (f FillGaps) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, [
 		return points, nil, nil
 	}
 
-	routes, err := f.ask(ctx, points, gaps)
+	routes, spent, err := f.ask(ctx, points, gaps)
 	if err != nil {
 		return nil, nil, err
 	}
+	rep.Degraded = spent
 
 	// Что дорисовываем: позиция левого конца → путь.
 	plan := make(map[int]*osrm.Route, len(gaps))
@@ -167,12 +176,19 @@ func (f FillGaps) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, [
 	rep.AddedPts -= dropped
 
 	f.save(rep, synthetic)
-	if rep.Filled == 0 {
-		return out, nil, nil
+
+	var warnings []string
+	if rep.Filled > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"fill_gaps: дыр %d, дорисовано %d, добавлено %.0f м",
+			rep.Gaps, rep.Filled, rep.AddedM))
 	}
-	return out, []string{fmt.Sprintf(
-		"fill_gaps: дыр %d, дорисовано %d, добавлено %.0f м",
-		rep.Gaps, rep.Filled, rep.AddedM)}, nil
+	if rep.Degraded {
+		warnings = append(warnings, fmt.Sprintf(
+			"fill_gaps: кончился бюджет, %d дыр из %d осталось прямыми — километраж занижен",
+			rep.Gaps-rep.Filled, rep.Gaps))
+	}
+	return out, warnings, nil
 }
 
 // findGaps — переходы, которые имеет смысл дорисовать.
@@ -215,7 +231,7 @@ func isGap(line float64, sec time.Duration) bool {
 
 // ask спрашивает пути по всем дырам. Ответы кладутся строго по своим местам,
 // поэтому порядок ответов на результат не влияет.
-func (f FillGaps) ask(ctx context.Context, points []geo.Point, gaps []gap) ([]*osrm.Route, error) {
+func (f FillGaps) ask(ctx context.Context, points []geo.Point, gaps []gap) ([]*osrm.Route, bool, error) {
 	routes := make([]*osrm.Route, len(gaps))
 
 	jobs := make(chan int)
@@ -242,10 +258,28 @@ func (f FillGaps) ask(ctx context.Context, points []geo.Point, gaps []gap) ([]*o
 	close(jobs)
 	wg.Wait()
 
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	// Бюджет кончился — недоспрошенные дыры остаются пустыми, и вердикт по
+	// ним будет «нет пути», то есть прямая. Отмена — другое дело: ждать уже
+	// некому.
+	spent, err := budgetSpent(ctx)
+	if err != nil {
+		return nil, false, err
 	}
-	return routes, nil
+	return routes, spent, nil
+}
+
+// budgetSpent — можно ли продолжать. Отличает исчерпанный бюджет (ответа
+// ЖДУТ, неполный лучше никакого) от отмены (ждать уже некому).
+func budgetSpent(ctx context.Context) (bool, error) {
+	err := ctx.Err()
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, context.DeadlineExceeded):
+		return true, nil
+	default:
+		return false, err
+	}
 }
 
 // fillVerdict — принять дорисовку или оставить прямую.
