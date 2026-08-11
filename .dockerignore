@@ -1,16 +1,42 @@
+# Всё, что не нужно СБОРКЕ образа. Образ собирает только `./cmd/server`.
+#
+# Тесты и золотые векторы исключены намеренно: векторов около десяти мегабайт,
+# и таскать их в контекст сборки при каждом `docker build` незачем. В CI тесты
+# гоняются отдельным образом (`Dockerfile.ci`) по чекауту репозитория, туда
+# этот файл не применяется.
+
+# История и локальное окружение
 .git
+.gitignore
 .idea
+.vscode
 .claude
 .DS_Store
+
+# Окружение
 .env
 .env.local
+.env.*.local
 .env.example
+
+# Тесты, эталоны, профили
+*_test.go
+**/testdata
+*.test
+*.out
+*.prof
+coverage.html
+
+# Документация и вспомогательное
+*.md
 docs/
 proto/
 swagger/swagger.json
-*.md
+
+# Файлы сборки и CI — в образ не идут
 Dockerfile
 Dockerfile.ci
 .dockerignore
 .gitlab-ci.yml
-internal/api/testdata
+docker-compose.yml
+Makefile

@@ -92,17 +92,12 @@ func (b *blockingResolver) Resolve(_ context.Context, points []geo.Point) (*serv
 
 func testConfig() *config.Config {
 	return &config.Config{
-		MaxPoints:             50000,
-		DedupDistanceMeters:   2.0,
-		DedupTimeGap:          60 * time.Second,
-		MaxSpeedKmh:           150,
-		MaxAccelKmhPerSec:     20,
-		TeleportJumpMeters:    15000,
-		TeleportReturnMeters:  2000,
-		TeleportMaxSpanMeters: 5000,
-		StopRadiusMeters:      50,
-		StopMinPoints:         5,
-		SimplifyMinMeters:     5.0,
+		MaxPoints:           50000,
+		DedupDistanceMeters: 2.0,
+		DedupTimeGap:        60 * time.Second,
+		StopRadiusMeters:    50,
+		StopMinPoints:       5,
+		SimplifyMinMeters:   5.0,
 	}
 }
 
@@ -154,7 +149,7 @@ func saveTask(t *testing.T, store *taskstore.Store, key, input string) {
 // happy path: валидный маршрут → done + результат.
 func TestProcess_Done(t *testing.T) {
 	store := newTestStore(t)
-	pool := newPool(t, store, service.New(testConfig()), 10*time.Second)
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 	saveTask(t, store, "ok", validInput(t))
 
 	pool.process("ok")
@@ -170,7 +165,7 @@ func TestProcess_Done(t *testing.T) {
 // битый Input → задача failed, ошибка про decode.
 func TestProcess_DecodeError_Failed(t *testing.T) {
 	store := newTestStore(t)
-	pool := newPool(t, store, service.New(testConfig()), 10*time.Second)
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 	saveTask(t, store, "bad", "!!! не base64 zlib !!!")
 
 	pool.process("bad")
@@ -233,7 +228,7 @@ func TestProcess_SlowProcessing_StillWritesResult(t *testing.T) {
 // карточки нет (Get → ErrNotFound) → не паникуем, ничего не создаём.
 func TestProcess_GetMissing_NoPanic(t *testing.T) {
 	store := newTestStore(t)
-	pool := newPool(t, store, service.New(testConfig()), 10*time.Second)
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 
 	assert.NotPanics(t, func() { pool.process("nope") })
 
@@ -266,7 +261,7 @@ func TestProcess_PanicRecovered_MarksFailed(t *testing.T) {
 // полный цикл: Start → задача в очереди → воркер её разобрал → done → Shutdown.
 func TestPool_ProcessesQueuedTask(t *testing.T) {
 	store := newTestStore(t)
-	pool := newPool(t, store, service.New(testConfig()), 10*time.Second)
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	pool.Start(ctx)
@@ -344,7 +339,7 @@ func TestPool_ShutdownWaitsForInflightTask(t *testing.T) {
 func TestProcess_NotifiesOnDone(t *testing.T) {
 	store := newTestStore(t)
 	rec := &recordingNotifier{}
-	pool := newPoolN(t, store, service.New(testConfig()), rec, 10*time.Second)
+	pool := newPoolN(t, store, service.New(testConfig(), nil), rec, 10*time.Second)
 	saveTask(t, store, "n1", validInput(t))
 
 	pool.process("n1")
@@ -374,7 +369,7 @@ func TestProcess_NotifiesOnFailed(t *testing.T) {
 func TestProcess_NotifyErrorDoesNotBreak(t *testing.T) {
 	store := newTestStore(t)
 	rec := &recordingNotifier{err: errors.New("laravel down")}
-	pool := newPoolN(t, store, service.New(testConfig()), rec, 10*time.Second)
+	pool := newPoolN(t, store, service.New(testConfig(), nil), rec, 10*time.Second)
 	saveTask(t, store, "n3", validInput(t))
 
 	assert.NotPanics(t, func() { pool.process("n3") })
@@ -388,7 +383,7 @@ func TestProcess_NotifyErrorDoesNotBreak(t *testing.T) {
 func TestProcess_NoNotifyWhenTaskMissing(t *testing.T) {
 	store := newTestStore(t)
 	rec := &recordingNotifier{}
-	pool := newPoolN(t, store, service.New(testConfig()), rec, 10*time.Second)
+	pool := newPoolN(t, store, service.New(testConfig(), nil), rec, 10*time.Second)
 
 	pool.process("ghost")
 

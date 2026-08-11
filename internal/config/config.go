@@ -19,18 +19,39 @@ type Config struct {
 	MaxDecompressedBytes int64
 	ResolveTimeout       time.Duration
 
-	DedupDistanceMeters   float64
-	DedupTimeGap          time.Duration
-	SimplifyMinMeters     float64
-	MaxPoints             int
-	MaxSpeedKmh           float64
-	MaxAccelKmhPerSec     float64
-	TeleportJumpMeters    float64
-	TeleportReturnMeters  float64
-	TeleportMaxSpanMeters float64
-	StopRadiusMeters      float64
-	StopMinPoints         int
-	AnchorToleranceMeters float64
+	// Пороги упаковки — трёх стадий, сжимающих уже очищенный трек. Всё
+	// остальное в чистке и дорисовке задано константами в коде намеренно: те
+	// числа выверены по эталону на Python и проверяются золотыми тестами, а
+	// ручка в окружении дала бы бою тихо разойтись с эталоном.
+	//
+	// Порогов четырёх снятых фильтров (якорь, телепорты, скорость, ускорение)
+	// здесь НЕТ. Они пережили сами стадии и ещё какое-то время доезжали до
+	// pipeline.Params, где их никто не читал: настройка, которая выглядит
+	// рабочей и молча ничего не делает.
+	DedupDistanceMeters float64
+	DedupTimeGap        time.Duration
+	SimplifyMinMeters   float64
+	MaxPoints           int
+	StopRadiusMeters    float64
+	StopMinPoints       int
+
+	// OSRM — маршрутизатор, на котором держится вся чистка: снэпы дают вес
+	// точке, расстояния по дорогам проверяют переходы, геометрия дорисовывает
+	// дыры. Пустой адрес — чистка и дорисовка пропускают трек насквозь с
+	// предупреждением, сервис при этом работает.
+	OSRMURL         string
+	OSRMTimeout     time.Duration
+	OSRMMaxParallel int
+
+	// OSRMRetries — сколько раз повторяем запрос, упавший по ВРЕМЕННОЙ причине
+	// (сеть моргнула, 5xx, таймаут). Отказы по существу (400, 404, 414) не
+	// повторяются никогда: ответ от этого не изменится.
+	//
+	// Ноль означает «не повторять вовсе», и это опасное значение по умолчанию:
+	// один моргнувший запрос оставляет дыру недорисованной, километраж
+	// занижается, и никто об этом не узнаёт. Пауза между попытками растёт
+	// (0.2 с, 0.4 с) со случайной добавкой, так что двух повторов хватает.
+	OSRMRetries int
 
 	// Redis (async: очередь задач + хранилище результатов)
 	RedisAddr     string
@@ -67,18 +88,17 @@ func Load() (*Config, error) {
 		MaxPoints:            envInt("MAX_POINTS", 50_000),
 		ResolveTimeout:       envDuration("RESOLVE_TIMEOUT", 25*time.Second),
 
-		// Pipeline
-		DedupDistanceMeters:   envFloat("DEDUP_DISTANCE_METERS", 2.0),
-		DedupTimeGap:          envDuration("DEDUP_TIME_GAP", 60*time.Second),
-		MaxSpeedKmh:           envFloat("MAX_SPEED_KMH", 150),
-		MaxAccelKmhPerSec:     envFloat("MAX_ACCEL_KMH_PER_SEC", 20),
-		TeleportJumpMeters:    envFloat("TELEPORT_JUMP_METERS", 15000),
-		TeleportReturnMeters:  envFloat("TELEPORT_RETURN_METERS", 2000),
-		TeleportMaxSpanMeters: envFloat("TELEPORT_MAX_SPAN_METERS", 5000),
-		StopRadiusMeters:      envFloat("STOP_RADIUS_METERS", 50),
-		StopMinPoints:         envInt("STOP_MIN_POINTS", 5),
-		SimplifyMinMeters:     envFloat("SIMPLIFY_MIN_METERS", 5.0),
-		AnchorToleranceMeters: envFloat("ANCHOR_BACKTRACK_TOLERANCE_METERS", 0), // 0 = якорный фильтр выключен
+		// Упаковка
+		DedupDistanceMeters: envFloat("DEDUP_DISTANCE_METERS", 2.0),
+		DedupTimeGap:        envDuration("DEDUP_TIME_GAP", 60*time.Second),
+		StopRadiusMeters:    envFloat("STOP_RADIUS_METERS", 50),
+		StopMinPoints:       envInt("STOP_MIN_POINTS", 5),
+		SimplifyMinMeters:   envFloat("SIMPLIFY_MIN_METERS", 5.0),
+
+		OSRMURL:         envStr("OSRM_URL", ""),
+		OSRMTimeout:     envDuration("OSRM_TIMEOUT", 30*time.Second),
+		OSRMMaxParallel: envInt("OSRM_MAX_PARALLEL", 16),
+		OSRMRetries:     envInt("OSRM_RETRIES", 2),
 
 		// Redis (async: очередь + хранилище результатов)
 		RedisAddr:     envStr("REDIS_ADDR", "localhost:6379"),

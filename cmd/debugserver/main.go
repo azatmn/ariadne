@@ -31,7 +31,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
-	svc := service.New(cfg)
+	svc := service.New(cfg, service.NewRouter(cfg, logger))
 	h := debugapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
 
 	// Middleware переиспользуем из internal/api (Recover/RequestID/Logger/LimitBody).

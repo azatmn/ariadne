@@ -6,7 +6,7 @@ import (
 )
 
 func BenchmarkResolve100(b *testing.B) {
-	svc := New(testConfig())
+	svc := New(testConfig(), nil)
 	points := testPoints(100)
 	ctx := context.Background()
 
@@ -17,7 +17,7 @@ func BenchmarkResolve100(b *testing.B) {
 }
 
 func BenchmarkResolve3000(b *testing.B) {
-	svc := New(testConfig())
+	svc := New(testConfig(), nil)
 	points := testPoints(3000)
 	ctx := context.Background()
 

@@ -2,7 +2,8 @@ package geo
 
 import "math"
 
-const earthRadius = 6_371_000 // метры
+// Средний радиус Земли по IUGG (R1), метры
+const earthRadius = 6_371_008.8
 
 func Haversine(a, b Point) float64 {
 	lat1 := a.Lat * math.Pi / 180

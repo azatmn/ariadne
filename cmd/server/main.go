@@ -58,7 +58,7 @@ func main() {
 	}()
 	logger.Info("redis connected", "addr", cfg.RedisAddr, "db", cfg.RedisDB)
 
-	svc := service.New(cfg)
+	svc := service.New(cfg, service.NewRouter(cfg, logger))
 
 	// Callback-клиент: уведомляет Laravel по готовности задачи. Пустой
 	// CALLBACK_URL → коллбэки выключены (no-op).

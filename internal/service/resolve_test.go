@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 
 	"ariadne/internal/config"
 	"ariadne/internal/geo"
+	"ariadne/internal/pipeline"
 )
 
 func testConfig() *config.Config {
@@ -17,8 +20,6 @@ func testConfig() *config.Config {
 		DedupDistanceMeters: 2.0,
 		DedupTimeGap:        60 * time.Second,
 		MaxPoints:           50_000,
-		MaxSpeedKmh:         150,
-		MaxAccelKmhPerSec:   30,
 		SimplifyMinMeters:   5.0,
 	}
 }
@@ -37,7 +38,7 @@ func testPoints(n int) []geo.Point {
 }
 
 func TestResolveHappyPath(t *testing.T) {
-	svc := New(testConfig())
+	svc := New(testConfig(), nil)
 	points := testPoints(10)
 
 	result, err := svc.Resolve(context.Background(), points)
@@ -52,26 +53,32 @@ func TestResolveHappyPath(t *testing.T) {
 func TestResolveTooManyPoints(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxPoints = 5
-	svc := New(cfg)
+	svc := New(cfg, nil)
 
 	_, err := svc.Resolve(context.Background(), testPoints(10))
 	require.ErrorIs(t, err, ErrTooManyPoints)
 }
 
 func TestResolveTooFewPointsAfterPipeline(t *testing.T) {
+	// Все точки в одном месте: дедуп схлопывает их в одну, и маршрута нет.
+	// Прежде здесь занижался порог скорости, но фильтра скорости в составе
+	// больше нет — конвейер чистит ядром, а оно так не работает.
 	cfg := testConfig()
-	cfg.MaxSpeedKmh = 0.001
-	svc := New(cfg)
+	svc := New(cfg, nil)
 
-	points := testPoints(4)
-	_, err := svc.Resolve(context.Background(), points)
+	same := testPoints(4)
+	for i := range same {
+		same[i].Lon, same[i].Lat = same[0].Lon, same[0].Lat
+	}
+
+	_, err := svc.Resolve(context.Background(), same)
 	require.ErrorIs(t, err, ErrTooFewPoints)
 }
 
 func TestResolveExactlyMaxPoints(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxPoints = 10
-	svc := New(cfg)
+	svc := New(cfg, nil)
 
 	result, err := svc.Resolve(context.Background(), testPoints(10))
 	require.NoError(t, err, "Resolve")
@@ -79,7 +86,7 @@ func TestResolveExactlyMaxPoints(t *testing.T) {
 }
 
 func TestResolveTwoPoints(t *testing.T) {
-	svc := New(testConfig())
+	svc := New(testConfig(), nil)
 
 	result, err := svc.Resolve(context.Background(), testPoints(2))
 	require.NoError(t, err, "Resolve")
@@ -87,15 +94,32 @@ func TestResolveTwoPoints(t *testing.T) {
 	assert.Equal(t, 2, result.BeforeCount, "BeforeCount")
 }
 
+// TestResolveBuildParams — КАЖДОЕ поле Params доезжает из конфига.
+//
+// Проверяем полным литералом, а не тремя выборочными полями: неперенесённое
+// поле остаётся нулевым, сборку не ломает и в логе не видно. Так уже вышло с
+// повторами OSRM — жили с нулём вместо двух и не знали. Литерал заставляет
+// дописать проверку при появлении нового поля: без него компилятор промолчит,
+// но `Equal` покажет расхождение.
 func TestResolveBuildParams(t *testing.T) {
 	cfg := testConfig()
-	cfg.MaxSpeedKmh = 200
 	cfg.DedupDistanceMeters = 5.0
+	cfg.DedupTimeGap = 90 * time.Second
+	cfg.SimplifyMinMeters = 7.5
 	cfg.StopRadiusMeters = 42
-	svc := New(cfg)
+	cfg.StopMinPoints = 9
+	svc := New(cfg, nil)
 
-	params := svc.buildParams()
-	assert.Equal(t, 200.0, params.MaxSpeedKmh, "MaxSpeedKmh")
-	assert.Equal(t, 5.0, params.DedupDistanceMeters, "DedupDistanceMeters")
-	assert.Equal(t, 42.0, params.StopRadiusMeters, "StopRadiusMeters")
+	assert.Equal(t, pipeline.Params{
+		DedupDistanceMeters: 5.0,
+		DedupTimeGap:        90 * time.Second,
+		SimplifyMinMeters:   7.5,
+		StopRadiusMeters:    42,
+		StopMinPoints:       9,
+	}, svc.buildParams())
+}
+
+// testLogger — логгер, который никуда не пишет.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

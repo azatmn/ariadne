@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"ariadne/internal/core"
 	"ariadne/internal/geo"
 	"ariadne/internal/logger"
+	"ariadne/internal/osrm"
 )
 
 // Stage — независимый этап обработки маршрута.
@@ -19,18 +21,18 @@ type Stage interface {
 
 // Params — параметры запроса, которые могут переопределять дефолты конфига.
 // Заполняется api/handler из тела запроса.
+//
+// Здесь только то, что читает хотя бы одна стадия ИЗ ТЕКУЩЕГО состава. Пороги
+// четырёх снятых фильтров (якорь, телепорты, скорость, ускорение) убраны: поле,
+// которое никто не читает, выглядит рабочей ручкой и молча ничего не делает —
+// поставить по нему потолок скорости фуры и не добиться ничего хуже, чем не
+// найти настройки вовсе. Сами файлы стадий остаются в репозитории.
 type Params struct {
-	DedupDistanceMeters   float64
-	DedupTimeGap          time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
-	SimplifyMinMeters     float64
-	MaxSpeedKmh           float64
-	MaxAccelKmhPerSec     float64
-	TeleportJumpMeters    float64 // скачок больше этого = подозрение на телепорт-загон
-	TeleportReturnMeters  float64 // возврат ближе этого к точке перед скачком = вырезаем загон
-	TeleportMaxSpanMeters float64 // вырезаем загон только если его размах меньше этого
-	StopRadiusMeters      float64 // размер пятна стоянки для сворачивания
-	StopMinPoints         int     // от скольких точек в пятне считаем стоянкой
-	AnchorToleranceMeters float64 // порог отката для якорного фильтра; 0 = выключено
+	DedupDistanceMeters float64
+	DedupTimeGap        time.Duration // окно времени для дедупа (защита от склейки «возврата в точку»)
+	SimplifyMinMeters   float64
+	StopRadiusMeters    float64 // размер пятна стоянки для сворачивания
+	StopMinPoints       int     // от скольких точек в пятне считаем стоянкой
 }
 
 type StageStats struct {
@@ -38,33 +40,100 @@ type StageStats struct {
 	PointsBefore int    `json:"pointsBefore" example:"3016"`
 	PointsAfter  int    `json:"pointsAfter" example:"2981"`
 	Elapsed      string `json:"elapsed" example:"47.123ms"`
+
+	// Extra — подробности стадии для разбора спорных маршрутов.
+	//
+	// По числу точек до и после ничего не понять: ядро может выбросить
+	// половину трека и быть правым, а может ошибиться на одном правиле.
+	// Здесь лежит то, что об этом говорит: сколько дыр нашла дорисовка,
+	// сколько проходов сделало ядро, сколько точек вернул страж.
+	Extra map[string]any `json:"extra,omitempty"`
+
+	// Error — причина, по которой стадия упала. Пустая, если всё хорошо.
+	Error string `json:"error,omitempty"`
 }
 
 // Pipeline — упорядоченная цепочка Stage.
 type Pipeline struct {
 	stages []Stage
+	state  *RunState
 }
 
-// New собирает pipeline под заданные параметры.
-// Порядок (MVP):
+// State — общий блокнот прогона: что ядро узнало о треке и что с ним сделали
+// упаковка и дорисовка.
+func (pl *Pipeline) State() *RunState { return pl.state }
+
+// CoreBudgetShare — какую долю ОСТАВШЕГОСЯ бюджета отдаём чистке.
 //
-//	SortByTime → RemoveAnchorBacktrack → RemoveTeleports → FilterBySpeed → FilterByAcceleration → Deduplicate → CollapseStops → Simplify
+// Чистка самая дорогая: десятки запросов к маршрутизатору и до дюжины
+// перестроений цепочки. Без ограничения она съедает весь срок задачи, и
+// дорисовка не успевает ничего — а это те самые 5 % километража, ради которых
+// она и делалась.
 //
-// RemoveAnchorBacktrack сразу после сортировки: якоря = крайние точки по времени,
-// режем «откаты» (точка дёрнулась назад к старту и от цели) до локальных фильтров.
-func New(p Params) *Pipeline {
-	stages := []Stage{
-		SortByTime{},
-		RemoveAnchorBacktrack{ToleranceMeters: p.AnchorToleranceMeters},
-		RemoveTeleports{JumpMeters: p.TeleportJumpMeters, ReturnMeters: p.TeleportReturnMeters, MaxSpanMeters: p.TeleportMaxSpanMeters},
-		FilterBySpeed{MaxKmh: p.MaxSpeedKmh},
-		FilterByAcceleration{MaxAccelKmhPerSec: p.MaxAccelKmhPerSec},
-		Deduplicate{DedupDistanceMeters: p.DedupDistanceMeters, MaxTimeGap: p.DedupTimeGap},
-		CollapseStops{RadiusMeters: p.StopRadiusMeters, MinPoints: p.StopMinPoints},
-		Simplify{MinMeters: p.SimplifyMinMeters},
+// Замер: дорисовка на маршруте — сотня дыр, восемь потоков, 88 мс на запрос,
+// то есть около полутора секунд. Пятой части бюджета ей хватает с запасом.
+const CoreBudgetShare = 0.8
+
+// budgeted — стадия, которой нужен свой кусок общего бюджета.
+//
+// Интерфейс, а не проверка по имени: имя стадии — про лог, и завязывать на
+// него поведение значит сломать конвейер молча при первом переименовании.
+type budgeted interface {
+	BudgetShare() float64
+}
+
+// Router — всё, что конвейеру нужно от маршрутизатора.
+//
+// Интерфейс, а не клиент: так конвейер собирается и проверяется без сети, а
+// `*osrm.Client` подходит под него как есть.
+type Router interface {
+	Snap(ctx context.Context, pts []geo.Point) ([]float64, []bool, []string)
+	PairDistance(ctx context.Context, pairs []osrm.Pair) ([]float64, []bool, []string)
+	RouteGeometry(ctx context.Context, a, b geo.Point) (*osrm.Route, bool)
+}
+
+// New собирает конвейер под заданные параметры.
+//
+//	SortByTime → Core → Deduplicate → CollapseStops → Simplify → ReachabilityGuard → FillGaps
+//
+// Смысл порядка. Сперва ЧИСТКА: ядро выбирает самую тяжёлую физически связную
+// цепочку точек и выбрасывает всё остальное. Потом УПАКОВКА: дубли, стоянки,
+// упрощение — она уменьшает трек втрое, теряя 0.04 % километража. Потом СТРАЖ:
+// упаковка судит по геометрии и может создать переход, который не проехать.
+// И только в конце ДОРИСОВКА — по тому, что уже признано настоящим; рисовать
+// дорогу через выброшенный спуфинг значило бы узаконить его.
+//
+// Четырёх прежних фильтров (якорь, телепорты, скорость, ускорение) в составе
+// НЕТ. Замер показал, что они режут асфальт: якорный стирал рабочую зону в
+// Бутове, фильтр скорости уносил 81 честную точку подряд, зацепившись за один
+// глюк. Каскадное удаление ядро решает по построению — оно сравнивает варианты
+// целиком, а не тянет одну опору вперёд. Файлы и тесты оставлены в
+// репозитории; в конвейер они не включены.
+//
+// `r` может быть nil: без маршрутизатора чистка и дорисовка пропускают трек
+// насквозь с предупреждением, и сервис продолжает работать.
+func New(p Params, r Router) *Pipeline {
+	state := &RunState{}
+
+	var engine *core.Core
+	var routes RouteSource
+	if r != nil {
+		engine = &core.Core{Snap: r, Road: RoadFrom(r)}
+		routes = r
 	}
 
-	return &Pipeline{stages: stages}
+	return &Pipeline{
+		state: state,
+		stages: []Stage{
+			SortByTime{},
+			Core{Engine: engine, State: state},
+			Deduplicate{DedupDistanceMeters: p.DedupDistanceMeters, MaxTimeGap: p.DedupTimeGap},
+			CollapseStops{RadiusMeters: p.StopRadiusMeters, MinPoints: p.StopMinPoints},
+			Simplify{MinMeters: p.SimplifyMinMeters, State: state},
+			ReachabilityGuard{State: state},
+			FillGaps{Routes: routes, State: state},
+		},
+	}
 }
 
 func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, []string, []StageStats, error) {
@@ -72,12 +141,19 @@ func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, [
 	var allWarnings []string
 	var stats []StageStats
 
+	// Блокнот описывает ОДИН прогон. Конвейер создаётся на запрос, но если его
+	// переиспользуют, второй прогон обязан начинаться с чистого листа: иначе
+	// страж возьмёт снимок от прошлого трека и вернёт чужие точки.
+	if pl.state != nil {
+		*pl.state = RunState{}
+	}
+
 	for _, s := range pl.stages {
 		// Проверка дедлайна между стадиями — защита от зависания на долгой обработке.
 		// Раньше ctx.Err() проверялся внутри intersections; после её удаления
 		// механизм перенесён сюда, чтобы работать независимо от состава стадий.
 		if err := ctx.Err(); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, stats, err
 		}
 
 		before := len(points)
@@ -87,18 +163,31 @@ func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, [
 			warnings []string
 			err      error
 		)
-		points, warnings, err = s.Apply(ctx, points)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("pipeline: stage %s: %w", s.Name(), err)
-		}
-
+		stageCtx, releaseStage := stageBudget(ctx, s)
+		points, warnings, err = s.Apply(stageCtx, points)
+		releaseStage()
 		elapsed := time.Since(start)
+
+		if err != nil {
+			// Статистику по уже пройденному отдаём НАРУЖУ вместе с ошибкой:
+			// без неё непонятно, где именно сломалось, а это первое, что
+			// спрашивают при разборе.
+			stats = append(stats, StageStats{
+				Name:         s.Name(),
+				PointsBefore: before,
+				PointsAfter:  before,
+				Elapsed:      elapsed.String(),
+				Error:        err.Error(),
+			})
+			return nil, nil, stats, fmt.Errorf("pipeline: stage %s: %w", s.Name(), err)
+		}
 
 		stats = append(stats, StageStats{
 			Name:         s.Name(),
 			PointsBefore: before,
 			PointsAfter:  len(points),
 			Elapsed:      elapsed.String(),
+			Extra:        pl.extraOf(s.Name()),
 		})
 
 		log.Info("stage done",
@@ -123,4 +212,73 @@ func (pl *Pipeline) Run(ctx context.Context, points []geo.Point) ([]geo.Point, [
 	}
 
 	return points, allWarnings, stats, nil
+}
+
+// stageBudget выдаёт стадии её долю оставшегося времени.
+//
+// Стадиям без своей доли отдаётся общий контекст как есть — большинство их
+// вообще не ходит в сеть и укладывается в миллисекунды.
+func stageBudget(ctx context.Context, s Stage) (context.Context, context.CancelFunc) {
+	b, ok := s.(budgeted)
+	if !ok {
+		return ctx, func() {}
+	}
+	deadline, has := ctx.Deadline()
+	if !has {
+		return ctx, func() {}
+	}
+
+	left := time.Until(deadline)
+	if left <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Duration(float64(left)*b.BudgetShare()))
+}
+
+// extraOf — подробности стадии для разбора. Пусто у тех, кому рассказывать
+// нечего: сортировка и дедуп полностью описываются числом точек до и после.
+func (pl *Pipeline) extraOf(stage string) map[string]any {
+	if pl.state == nil {
+		return nil
+	}
+	switch stage {
+	case "core":
+		r := pl.state.Report
+		return map[string]any{
+			"reordered":    r.Reordered,
+			"collapsed":    r.Collapsed,
+			"stopsTotal":   r.StopsTotal,
+			"stopsTrusted": r.StopsTrusted,
+			"stopsFrozen":  r.StopsFrozen,
+			"split":        r.Split,
+			"spread":       r.Spread,
+			"amnesty":      r.Amnesty,
+			"loops":        r.Loops,
+			"roadBanned":   r.RoadBanned,
+			"roadAsked":    r.RoadAsked,
+			"roadPasses":   r.RoadPasses,
+			"dropped":      r.Dropped,
+			"snapMedianM":  r.SnapMedian,
+			"snapFraction": r.SnapFraction,
+			"degraded":     r.Degraded,
+			"kmBefore":     r.KmBefore,
+			"kmAfter":      r.KmAfter,
+		}
+	case "reachability_guard":
+		if pl.state.Guarded == 0 {
+			return nil
+		}
+		return map[string]any{"restored": pl.state.Guarded}
+	case "fill_gaps":
+		f := pl.state.Fill
+		return map[string]any{
+			"gaps":     f.Gaps,
+			"filled":   f.Filled,
+			"addedM":   f.AddedM,
+			"addedPts": f.AddedPts,
+			"reasons":  f.Reasons,
+			"degraded": f.Degraded,
+		}
+	}
+	return nil
 }
