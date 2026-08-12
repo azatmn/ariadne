@@ -156,6 +156,15 @@ func (p *Pool) failPoisoned(taskKey string) {
 		return
 	}
 	p.logger.Error("task dropped as poisonous", "taskKey", taskKey, "attempts", maxAttempts)
+
+	// Уведомляем так же, как в обычном пути падения. Без этого выходит тихий
+	// тупик: карточка стала `failed`, а Laravel об этом не знает и опрашивает
+	// её до конца TTL, чтобы в итоге получить «нет такой задачи».
+	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), notifyTimeout)
+	defer notifyCancel()
+	if err := p.notify.Notify(notifyCtx, card.Key, string(card.Status)); err != nil {
+		p.logger.Warn("callback failed", "taskKey", card.Key, "status", card.Status, "error", err)
+	}
 }
 
 // Shutdown ждёт, пока воркеры допишут текущие задачи (после отмены ctx),

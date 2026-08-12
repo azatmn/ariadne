@@ -675,3 +675,35 @@ func TestProcess_PutsTaskLoggerIntoContext(t *testing.T) {
 	assert.Contains(t, out, `"taskKey":"traceable"`,
 		"без номера задачи запись бесполезна: непонятно, о каком маршруте речь")
 }
+
+// Ядовитую задачу обязаны не только пометить упавшей, но и СКАЗАТЬ об этом.
+//
+// Иначе получается тихий тупик: карточка стала `failed`, а Laravel об этом не
+// знает и опрашивает её до конца TTL, после чего получает «нет такой задачи».
+// В обычном пути падения коллбэк уходит — здесь его просто забыли.
+func TestPool_NotifiesAboutPoisonousTask(t *testing.T) {
+	old := reclaimInterval
+	reclaimInterval = 20 * time.Millisecond
+	t.Cleanup(func() { reclaimInterval = old })
+
+	spy := newReclaimSpy("poison-2")
+	notes := &recordingNotifier{}
+	pool := newPoolN(t, spy, service.New(testConfig(), nil), notes, time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+
+	require.Eventually(t, func() bool {
+		return len(notes.snapshot()) > 0
+	}, 2*time.Second, 10*time.Millisecond, "про снятую задачу обязаны уведомить")
+
+	calls := notes.snapshot()
+	assert.Equal(t, "poison-2", calls[0].taskKey)
+	assert.Equal(t, string(taskstore.StatusFailed), calls[0].status,
+		"уведомлять надо именно о падении")
+
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+}

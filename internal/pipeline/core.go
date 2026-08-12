@@ -113,8 +113,10 @@ func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []str
 		out[k] = points[i]
 	}
 
+	var warnings []string
 	if rep.Degraded {
 		c.markDegraded()
+		warnings = append(warnings, coreDegradedWarning())
 	}
 
 	if c.State != nil {
@@ -128,7 +130,21 @@ func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []str
 		}
 	}
 
-	return out, nil, nil
+	return out, warnings, nil
+}
+
+// coreDegradedWarning — объяснение к пометке «результат неполный» от ядра.
+//
+// Флаг говорит «верить с оговоркой», но не говорит какой; у дорисовки текст
+// был, у ядра — нет, и клиент получал пометку с пустым списком предупреждений.
+//
+// Про знак сказано честно и намеренно. У дорисовки недоспрошенные дыры
+// остаются прямыми, и километраж ЗАНИЖАЕТСЯ. Здесь наоборот: ядро не успело
+// дочистить, часть спуфинга осталась в треке, и километраж может оказаться
+// БОЛЬШЕ настоящего. Написать «занижен», как у дорисовки, значило бы соврать
+// про направление ошибки — а по этой строке будут принимать решение.
+func coreDegradedWarning() string {
+	return "core: budget spent, cleaning incomplete — leftover spoofing may inflate the mileage"
 }
 
 // pairSource — то, что умеет отвечать про расстояния по дорогам парами

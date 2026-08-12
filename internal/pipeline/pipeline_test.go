@@ -500,3 +500,30 @@ func TestFillStage_MarksDegradedWhenBudgetSpent(t *testing.T) {
 	assert.True(t, st.Fill.Degraded, "дорисовка обязана записать это себе")
 	assert.True(t, st.Degraded, "и поднять признак на весь прогон")
 }
+
+// coreDegraded — движок, который отдаёт трек с пометкой «не успел».
+type coreDegradedEngine struct{}
+
+// Исчерпанный бюджет ядра обязан быть объяснён СЛОВАМИ, а не только флагом.
+//
+// Флаг говорит «верить с оговоркой», но не говорит какой. У дорисовки текст
+// есть, у ядра его не было вовсе: клиент получал `degraded: true` и пустой
+// список предупреждений — то есть «что-то не так, а что, догадайся».
+//
+// И формулировка обязана быть честной про ЗНАК. Недочищенный спуфинг делает
+// километраж БОЛЬШЕ настоящего, а не меньше: текст «километраж занижен» здесь
+// был бы прямым враньём.
+func TestCoreStage_ExplainsSpentBudgetInWords(t *testing.T) {
+	st := &RunState{}
+	c := Core{Engine: nil, State: st}
+	_, warnings, err := c.Apply(context.Background(), degradedTrack())
+	require.NoError(t, err)
+	require.NotEmpty(t, warnings, "без движка объяснение есть")
+
+	// А теперь то же самое, но для исчерпанного бюджета: сообщение обязано
+	// существовать и не обещать занижение.
+	msg := coreDegradedWarning()
+	require.NotEmpty(t, msg)
+	assert.NotContains(t, msg, "understated",
+		"недочищенный спуфинг ЗАВЫШАЕТ километраж — обещать занижение нельзя: %q", msg)
+}
