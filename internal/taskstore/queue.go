@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,11 @@ const (
 	// а обрезка приблизительная (`~`), чтобы Redis не тратил время на точное
 	// соблюдение границы.
 	streamMaxLen = 100_000
+
+	// reclaimBatch — сколько брошенных записей забираем за один заход.
+	// Потолок нужен, чтобы уборщик не выгребал разом всё после долгой аварии
+	// и не заваливал воркеров: остаток заберётся на следующем круге.
+	reclaimBatch = 100
 )
 
 // blockTimeout — насколько Dequeue «висит» за один заход. По истечении
@@ -95,11 +101,20 @@ func (s *Store) EnsureQueue(ctx context.Context) error {
 
 // Enqueue кладёт номерок задачи в очередь.
 func (s *Store) Enqueue(ctx context.Context, taskKey string) error {
+	return s.enqueueAttempt(ctx, taskKey, 0)
+}
+
+// enqueueAttempt кладёт номерок с номером попытки. Общий путь для первой
+// постановки и для возврата брошенной задачи уборщиком.
+func (s *Store) enqueueAttempt(ctx context.Context, taskKey string, attempt int) error {
 	err := s.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamKey,
 		MaxLen: streamMaxLen,
 		Approx: true,
-		Values: map[string]any{"key": taskKey},
+		Values: map[string]any{
+			"key":        taskKey,
+			attemptField: strconv.Itoa(attempt),
+		},
 	}).Err()
 	if err != nil {
 		return fmt.Errorf("taskstore: enqueue: %w", err)
@@ -150,6 +165,84 @@ func (s *Store) Ack(ctx context.Context, c Claim) error {
 		return fmt.Errorf("taskstore: ack: %w", err)
 	}
 	return nil
+}
+
+// attemptField — номер попытки, с которой едет задача.
+//
+// Счёт ведём в самой записи, а не полагаемся на счётчик Redis: возвращая
+// задачу в очередь, мы кладём НОВУЮ запись, и счётчик выдач у неё начался бы
+// с нуля. Тогда ядовитая задача ходила бы по кругу вечно — ровно то, от чего
+// предел попыток и заводится.
+const attemptField = "attempt"
+
+// Reclaim возвращает в работу задачи, брошенные умершими процессами.
+//
+// Брошенной считается выданная и не подтверждённая дольше minIdle. Порог
+// обязан быть заведомо больше времени обработки, иначе уборщик отберёт задачу
+// у живого воркера и она посчитается дважды.
+//
+// Задачу, которую брали maxAttempts раз и ни разу не довели до конца, в
+// очередь НЕ возвращаем: она роняет обработку сама по себе, и гонять её по
+// кругу — это крутить сервис в перезапусках без всякого объяснения. Такие
+// возвращаются вызывающему: пометить упавшими и объяснить причину — его дело,
+// хранилище про смысл задач не знает.
+//
+// Возвращает: номерки, ушедшие на новый круг, и номерки признанных ядовитыми.
+func (s *Store) Reclaim(ctx context.Context, minIdle time.Duration, maxAttempts int) (requeued, poisoned []string, err error) {
+	// XAUTOCLAIM отдаёт записи вместе со значениями и заодно переписывает их
+	// на нас — иначе они остались бы числиться за мёртвым процессом.
+	msgs, _, err := s.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+		Stream:   streamKey,
+		Group:    groupName,
+		Consumer: s.consumer,
+		MinIdle:  minIdle,
+		Start:    "0",
+		Count:    reclaimBatch,
+	}).Result()
+	if err != nil {
+		return nil, nil, fmt.Errorf("taskstore: reclaim: %w", err)
+	}
+
+	for _, m := range msgs {
+		key, ok := m.Values["key"].(string)
+		if !ok {
+			// Номерка в записи нет — возвращать нечего. Снимаем, чтобы не
+			// висела вечно и не попадалась уборщику каждый раз.
+			_ = s.rdb.XAck(ctx, streamKey, groupName, m.ID).Err()
+			continue
+		}
+
+		attempt := attemptOf(m.Values) + 1
+		if attempt >= maxAttempts {
+			poisoned = append(poisoned, key)
+			_ = s.rdb.XAck(ctx, streamKey, groupName, m.ID).Err()
+			continue
+		}
+
+		// Новая запись, а не повторная выдача старой: обычные воркеры читают
+		// только то, чего ещё никому не давали.
+		if err := s.enqueueAttempt(ctx, key, attempt); err != nil {
+			return requeued, poisoned, err
+		}
+		if err := s.rdb.XAck(ctx, streamKey, groupName, m.ID).Err(); err != nil {
+			return requeued, poisoned, fmt.Errorf("taskstore: reclaim ack: %w", err)
+		}
+		requeued = append(requeued, key)
+	}
+	return requeued, poisoned, nil
+}
+
+// attemptOf — какая это была попытка. Нет поля — значит первая.
+func attemptOf(values map[string]any) int {
+	raw, ok := values[attemptField].(string)
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Claimed — сколько задач выдано и не подтверждено прямо сейчас.

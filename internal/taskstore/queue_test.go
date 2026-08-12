@@ -108,3 +108,105 @@ func init() {
 	// В тестах ждать по пять секунд на каждой пустой очереди незачем.
 	blockTimeout = 50 * time.Millisecond
 }
+
+// --- уборщик брошенных задач ---------------------------------------------
+
+// Живую задачу отбирать нельзя. Порог берём заведомо больше её возраста —
+// так проверка не зависит от часов и не «моргает» на загруженной машине.
+func TestReclaim_LeavesFreshClaimAlone(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "working"))
+
+	_, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+
+	requeued, poisoned, err := s.Reclaim(ctx, time.Hour, 5)
+	require.NoError(t, err)
+	assert.Empty(t, requeued, "задача в работе минуту назад — не брошенная")
+	assert.Empty(t, poisoned)
+
+	n, err := s.Claimed(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "она как числилась за воркером, так и должна числиться")
+}
+
+// Брошенная задача возвращается в очередь, и её может взять другой воркер.
+//
+// Это и есть смысл уборщика: процесс умер между выдачей и сохранением, никто
+// об этом не узнал — но задача не должна остаться висеть навсегда.
+func TestReclaim_RequeuesAbandonedTask(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "abandoned"))
+
+	_, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+
+	// Порог 0 — «брошено всё, что выдано»: так проверка не зависит от часов.
+	requeued, poisoned, err := s.Reclaim(ctx, 0, 5)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"abandoned"}, requeued)
+	assert.Empty(t, poisoned)
+
+	again, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "abandoned", again.TaskKey, "вернувшуюся задачу обязан получить следующий воркер")
+}
+
+// Задача, которую брали слишком много раз, — ядовитая: она роняет обработку
+// сама по себе, и гонять её по кругу бессмысленно. Уборщик перестаёт её
+// возвращать и отдаёт вызывающему, чтобы тот пометил её упавшей.
+func TestReclaim_StopsPoisonousTaskAfterLimit(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "poison"))
+
+	const limit = 3
+	for range limit {
+		_, err := s.Dequeue(ctx)
+		require.NoError(t, err)
+		_, poisoned, err := s.Reclaim(ctx, 0, limit)
+		require.NoError(t, err)
+		if len(poisoned) > 0 {
+			assert.Equal(t, []string{"poison"}, poisoned)
+			n, err := s.Claimed(ctx)
+			require.NoError(t, err)
+			assert.Zero(t, n, "ядовитую задачу больше не держим в выданных")
+			return
+		}
+	}
+	t.Fatalf("после %d попыток задача обязана быть признана ядовитой", limit)
+}
+
+// Подтверждённую задачу уборщик не трогает: она доведена до конца.
+func TestReclaim_IgnoresAckedTask(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "finished"))
+
+	claim, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Ack(ctx, claim))
+
+	requeued, poisoned, err := s.Reclaim(ctx, 0, 5)
+	require.NoError(t, err)
+	assert.Empty(t, requeued)
+	assert.Empty(t, poisoned)
+}
+
+// Пустая очередь — уборщику просто нечего делать.
+func TestReclaim_EmptyQueueIsNoop(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+
+	requeued, poisoned, err := s.Reclaim(ctx, 0, 5)
+	require.NoError(t, err)
+	assert.Empty(t, requeued)
+	assert.Empty(t, poisoned)
+}

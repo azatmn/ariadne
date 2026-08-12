@@ -44,6 +44,7 @@ type store interface {
 	Get(ctx context.Context, taskKey string) (*taskstore.Task, error)
 	Update(ctx context.Context, task *taskstore.Task) error
 	Ack(ctx context.Context, c taskstore.Claim) error
+	Reclaim(ctx context.Context, minIdle time.Duration, maxAttempts int) (requeued, poisoned []string, err error)
 }
 
 // Pool — пул воркеров.
@@ -72,12 +73,88 @@ func New(store store, svc resolver, notify notifier, logger *slog.Logger, worker
 	}
 }
 
-// Start запускает N воркеров. Они крутятся, пока не отменят ctx. Не блокирует.
+// Start запускает N воркеров и уборщика. Крутятся, пока не отменят ctx.
+// Не блокирует.
 func (p *Pool) Start(ctx context.Context) {
 	for i := 0; i < p.workers; i++ {
 		p.wg.Add(1)
 		go p.worker(ctx)
 	}
+	p.wg.Add(1)
+	go p.reclaimer(ctx)
+}
+
+// reclaimer возвращает в работу задачи, брошенные умершими процессами.
+//
+// Без него замена очереди сделана наполовину: задача перестала пропадать, но
+// и не возвращается — числится за мёртвым процессом до скончания века, а
+// клиент ждёт её до конца TTL.
+//
+// Порог брошенности НЕ отдельная настройка, а удвоенный худший путь обработки
+// (`DrainBudget`). Отдельной ручкой её однажды поставят меньше времени
+// обработки, и уборщик начнёт отбирать задачи у живых воркеров — двойная
+// работа, которую никто не заметит. Меняешь RESOLVE_TIMEOUT — порог едет следом.
+func (p *Pool) reclaimer(ctx context.Context) {
+	defer p.wg.Done()
+
+	minIdle := 2 * p.DrainBudget()
+
+	// Печатаем порог: он вычисляется из RESOLVE_TIMEOUT, и без этой строки
+	// увидеть его можно только в коде. Выросли маршруты, подняли таймаут —
+	// в логе сразу видно, каким стал срок.
+	p.logger.Info("reclaimer started",
+		"everyd", reclaimInterval, "abandonedAfter", minIdle, "maxAttempts", maxAttempts)
+
+	t := time.NewTicker(reclaimInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.reclaimOnce(ctx, minIdle)
+		}
+	}
+}
+
+func (p *Pool) reclaimOnce(ctx context.Context, minIdle time.Duration) {
+	opCtx, cancel := context.WithTimeout(context.Background(), ioTimeout)
+	defer cancel()
+
+	requeued, poisoned, err := p.store.Reclaim(opCtx, minIdle, maxAttempts)
+	if err != nil {
+		p.logger.Error("reclaim failed", "error", err)
+		return
+	}
+	if len(requeued) > 0 {
+		p.logger.Warn("abandoned tasks returned to queue",
+			"count", len(requeued), "taskKeys", requeued)
+	}
+	for _, key := range poisoned {
+		p.failPoisoned(key)
+	}
+}
+
+// failPoisoned помечает задачу упавшей: её брали maxAttempts раз и ни разу не
+// довели до конца. Оставить её в pending значило бы заставить клиента ждать до
+// конца TTL ответа, которого не будет.
+func (p *Pool) failPoisoned(taskKey string) {
+	opCtx, cancel := context.WithTimeout(context.Background(), ioTimeout)
+	defer cancel()
+
+	card, err := p.store.Get(opCtx, taskKey)
+	if err != nil {
+		p.logger.Error("poisoned task: get failed", "taskKey", taskKey, "error", err)
+		return
+	}
+	card.Status = taskstore.StatusFailed
+	card.Error = fmt.Sprintf("задача снята после %d попыток: обработка обрывалась каждый раз", maxAttempts)
+	if err := p.store.Update(opCtx, card); err != nil {
+		p.logger.Error("poisoned task: update failed", "taskKey", taskKey, "error", err)
+		return
+	}
+	p.logger.Error("task dropped as poisonous", "taskKey", taskKey, "attempts", maxAttempts)
 }
 
 // Shutdown ждёт, пока воркеры допишут текущие задачи (после отмены ctx),
@@ -130,6 +207,22 @@ func (p *Pool) worker(ctx context.Context) {
 		p.process(claim)
 	}
 }
+
+// reclaimInterval — как часто уборщик ищет брошенные задачи.
+//
+// Раз в минуту: задача, которую бросил умерший процесс, всё равно уже
+// просрочена на величину порога, и лишняя минута ничего не меняет. var —
+// чтобы тесты не ждали минуту.
+var reclaimInterval = time.Minute
+
+// maxAttempts — сколько раз задачу можно выдать, прежде чем признать её
+// ядовитой.
+//
+// Ядовитая — та, что роняет обработку сама по себе: пятикратный обход по
+// кругу выглядит как «сервис постоянно перезапускается» и не объясняет
+// ничего. Пять — с запасом на случайные беды (моргнула сеть, выключили
+// контейнер), но заведомо конечно.
+const maxAttempts = 5
 
 // ioTimeout — таймаут на чтение/запись карточки в Redis. Отдельный от таймаута
 // обработки задачи. var (а не const), чтобы тесты могли занижать его.

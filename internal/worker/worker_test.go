@@ -459,6 +459,10 @@ func (s *brokenSaveStore) Ack(context.Context, taskstore.Claim) error {
 	return nil
 }
 
+func (s *brokenSaveStore) Reclaim(context.Context, time.Duration, int) ([]string, []string, error) {
+	return nil, nil, nil
+}
+
 // Результат не сохранился — значит задача НЕ доведена до конца, и расписки
 // быть не должно ни при каких условиях.
 //
@@ -494,4 +498,143 @@ func TestProcess_ReleasesClaimAfterSave(t *testing.T) {
 	claimed, err := store.Claimed(ctx)
 	require.NoError(t, err)
 	assert.Zero(t, claimed, "задача доведена до конца — висеть в выданных ей незачем")
+}
+
+// reclaimSpy — хранилище, которое считает вызовы уборщика и умеет отдавать
+// ядовитые задачи.
+type reclaimSpy struct {
+	mu       sync.Mutex
+	calls    int
+	minIdle  time.Duration
+	poison   []string
+	failed   map[string]string // номерок → текст ошибки, записанный воркером
+	claimBuf chan taskstore.Claim
+}
+
+func newReclaimSpy(poison ...string) *reclaimSpy {
+	return &reclaimSpy{poison: poison, failed: map[string]string{}, claimBuf: make(chan taskstore.Claim)}
+}
+
+func (r *reclaimSpy) Dequeue(ctx context.Context) (taskstore.Claim, error) {
+	select {
+	case c := <-r.claimBuf:
+		return c, nil
+	case <-ctx.Done():
+		return taskstore.Claim{}, taskstore.ErrNoTask
+	case <-time.After(10 * time.Millisecond):
+		return taskstore.Claim{}, taskstore.ErrNoTask
+	}
+}
+
+func (r *reclaimSpy) Get(_ context.Context, key string) (*taskstore.Task, error) {
+	return &taskstore.Task{Key: key, Status: taskstore.StatusPending}, nil
+}
+
+func (r *reclaimSpy) Update(_ context.Context, task *taskstore.Task) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if task.Status == taskstore.StatusFailed {
+		r.failed[task.Key] = task.Error
+	}
+	return nil
+}
+
+func (r *reclaimSpy) Ack(context.Context, taskstore.Claim) error { return nil }
+
+func (r *reclaimSpy) Reclaim(_ context.Context, minIdle time.Duration, _ int) ([]string, []string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.minIdle = minIdle
+	out := r.poison
+	r.poison = nil
+	return nil, out, nil
+}
+
+func (r *reclaimSpy) snapshot() (int, time.Duration, map[string]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make(map[string]string, len(r.failed))
+	for k, v := range r.failed {
+		cp[k] = v
+	}
+	return r.calls, r.minIdle, cp
+}
+
+// Уборщик обязан запускаться сам вместе с пулом, а не по чьей-то команде:
+// брошенные задачи появляются от аварий, и звать уборщика будет некому.
+func TestPool_RunsReclaimerOnStart(t *testing.T) {
+	old := reclaimInterval
+	reclaimInterval = 20 * time.Millisecond
+	t.Cleanup(func() { reclaimInterval = old })
+
+	spy := newReclaimSpy()
+	pool := newPool(t, spy, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+
+	require.Eventually(t, func() bool {
+		n, _, _ := spy.snapshot()
+		return n >= 2
+	}, 2*time.Second, 10*time.Millisecond, "уборщик обязан ходить по кругу, а не один раз")
+
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+}
+
+// Срок «задача брошена» обязан быть заведомо больше времени обработки, иначе
+// уборщик отберёт задачу у живого воркера и она посчитается дважды.
+func TestPool_ReclaimIdleExceedsProcessingBudget(t *testing.T) {
+	old := reclaimInterval
+	reclaimInterval = 20 * time.Millisecond
+	t.Cleanup(func() { reclaimInterval = old })
+
+	spy := newReclaimSpy()
+	pool := newPool(t, spy, service.New(testConfig(), nil), 3*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	require.Eventually(t, func() bool {
+		n, _, _ := spy.snapshot()
+		return n >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+
+	_, minIdle, _ := spy.snapshot()
+	assert.Greater(t, minIdle, pool.DrainBudget(),
+		"порог брошенности обязан быть больше худшего пути обработки, иначе задачу отберут у живого воркера")
+}
+
+// Ядовитую задачу помечаем упавшей с внятной причиной — иначе она останется
+// в pending навсегда, а клиент будет ждать её до конца TTL.
+func TestPool_MarksPoisonousTaskFailed(t *testing.T) {
+	old := reclaimInterval
+	reclaimInterval = 20 * time.Millisecond
+	t.Cleanup(func() { reclaimInterval = old })
+
+	spy := newReclaimSpy("poison-1")
+	pool := newPool(t, spy, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+
+	require.Eventually(t, func() bool {
+		_, _, failed := spy.snapshot()
+		return len(failed) > 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	_, _, failed := spy.snapshot()
+	assert.Contains(t, failed["poison-1"], "попыт",
+		"причина обязана объяснять, почему задачу перестали пробовать: %q", failed["poison-1"])
+
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
 }
