@@ -447,3 +447,56 @@ func TestRunState_NotDegradedOnHealthyRun(t *testing.T) {
 	assert.False(t, pl.State().Degraded,
 		"исправный прогон не должен помечаться неполным")
 }
+
+// Стадия ядра метит прогон неполным САМА, без помощи дорисовки.
+//
+// Проверка отдельно от сквозного теста не для симметрии: там маршрутизатора
+// нет ни у кого, обе стадии метят разом, и любую из двух пометок можно снять
+// незаметно. Мутация это и показала — убрал пометку у ядра, все тесты остались
+// зелёными.
+func TestCoreStage_MarksDegradedWithoutEngine(t *testing.T) {
+	st := &RunState{}
+	out, warnings, err := Core{Engine: nil, State: st}.Apply(context.Background(), degradedTrack())
+
+	require.NoError(t, err)
+	assert.Len(t, out, len(degradedTrack()), "без движка трек проходит насквозь")
+	assert.True(t, st.Degraded, "чистка пропущена — результат неполный")
+	assert.NotEmpty(t, warnings)
+}
+
+// stalledRouter ждёт конца бюджета и не отвечает ничего.
+//
+// Так ведёт себя перегруженный OSRM: соединение принято, ответа нет. Ждать
+// таймера в тесте не приходится — горутины разблокирует сам дедлайн, поэтому
+// проверка не зависит от того, насколько загружена машина.
+type stalledRouter struct{ pipeRouter }
+
+func (stalledRouter) RouteGeometry(ctx context.Context, _, _ geo.Point) (*osrm.Route, bool) {
+	<-ctx.Done()
+	return nil, false
+}
+
+// Дорисовка метит прогон неполным, когда не успела спросить про все дыры.
+//
+// Это главный случай, ради которого пометка заводилась: OSRM тормозит, часть
+// дыр остаётся прямыми через поля, километраж занижен — а задача при этом
+// завершается успешно.
+func TestFillStage_MarksDegradedWhenBudgetSpent(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	// Две точки в двух километрах друг от друга и в пяти минутах по времени —
+	// это дыра по любым порогам.
+	points := []geo.Point{
+		{Time: t0, Lon: 37.60, Lat: 55.75},
+		{Time: t0.Add(5 * time.Minute), Lon: 37.63, Lat: 55.75},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	st := &RunState{}
+	_, _, err := FillGaps{Routes: stalledRouter{}, State: st}.Apply(ctx, points)
+
+	require.NoError(t, err, "исчерпанный бюджет — не ошибка: результат отдаём с оговоркой")
+	assert.True(t, st.Fill.Degraded, "дорисовка обязана записать это себе")
+	assert.True(t, st.Degraded, "и поднять признак на весь прогон")
+}
