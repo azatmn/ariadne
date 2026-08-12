@@ -150,7 +150,7 @@ func (p *Pool) failPoisoned(taskKey string) {
 		return
 	}
 	card.Status = taskstore.StatusFailed
-	card.Error = fmt.Sprintf("задача снята после %d попыток: обработка обрывалась каждый раз", maxAttempts)
+	card.Error = fmt.Sprintf("task dropped after %d attempts: processing broke off every time", maxAttempts)
 	if err := p.store.Update(opCtx, card); err != nil {
 		p.logger.Error("poisoned task: update failed", "taskKey", taskKey, "error", err)
 		return

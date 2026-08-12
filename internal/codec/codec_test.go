@@ -147,7 +147,7 @@ func TestDecodeInvalidJSONInsideZlib(t *testing.T) {
 	require.Error(t, err, "expected error for invalid JSON inside zlib")
 	// Не массив — отдельная беда от «массив, но с мусором внутри»: разбор
 	// теперь потоковый и открывающую скобку читает первым же шагом.
-	assert.Contains(t, err.Error(), "ожидался массив точек")
+	assert.Contains(t, err.Error(), "expected an array of points")
 }
 
 // Массив без закрывающей скобки. При потоковом разборе это отдельный случай:

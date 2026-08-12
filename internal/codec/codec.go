@@ -114,13 +114,13 @@ func Decode(routeCompressed string, lim Limits) ([]geo.Point, error) {
 		return nil, decodeErr(err)
 	}
 	if d, ok := tok.(json.Delim); !ok || d != '[' {
-		return nil, fmt.Errorf("codec: ожидался массив точек, получено %v", tok)
+		return nil, fmt.Errorf("codec: expected an array of points, got %v", tok)
 	}
 
 	var points []geo.Point
 	for dec.More() {
 		if len(points) >= lim.Points {
-			return nil, fmt.Errorf("%w: больше %d", ErrTooManyPoints, lim.Points)
+			return nil, fmt.Errorf("%w: more than %d", ErrTooManyPoints, lim.Points)
 		}
 
 		var w wirePoint

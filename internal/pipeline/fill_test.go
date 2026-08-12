@@ -667,7 +667,7 @@ func TestFill_OutOfBudgetKeepsWhatItDrew(t *testing.T) {
 	for _, w := range warns {
 		joined += w
 	}
-	assert.Contains(t, joined, "бюджет", "предупреждение обязано быть внятным")
+	assert.Contains(t, joined, "budget spent", "предупреждение обязано быть внятным")
 }
 
 func TestFill_CancelStillFails(t *testing.T) {

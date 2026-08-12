@@ -147,7 +147,7 @@ func (f FillGaps) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, [
 		if f.State != nil {
 			f.State.Degraded = true
 		}
-		return points, []string{"fill_gaps: источник путей не задан, дыры оставлены прямыми"}, nil
+		return points, []string{"fill_gaps: no route source configured, gaps left as straight lines"}, nil
 	}
 
 	gaps := f.findGaps(points)
@@ -187,12 +187,12 @@ func (f FillGaps) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, [
 	var warnings []string
 	if rep.Filled > 0 {
 		warnings = append(warnings, fmt.Sprintf(
-			"fill_gaps: дыр %d, дорисовано %d, добавлено %.0f м",
+			"fill_gaps: %d gaps, %d filled, %.0f m added",
 			rep.Gaps, rep.Filled, rep.AddedM))
 	}
 	if rep.Degraded {
 		warnings = append(warnings, fmt.Sprintf(
-			"fill_gaps: кончился бюджет, %d дыр из %d осталось прямыми — километраж занижен",
+			"fill_gaps: budget spent, %d of %d gaps left straight — mileage understated",
 			rep.Gaps-rep.Filled, rep.Gaps))
 	}
 	return out, warnings, nil

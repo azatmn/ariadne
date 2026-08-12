@@ -40,7 +40,7 @@ func (g ReachabilityGuard) Apply(_ context.Context, points []geo.Point) ([]geo.P
 	pos, ok := embed(points, before)
 	if !ok {
 		// Снимок не от этого прогона. Гадать нельзя.
-		return points, []string{"reachability_guard: снимок до упаковки не совпал с треком, проверка пропущена"}, nil
+		return points, []string{"reachability_guard: pre-packing snapshot does not match the track, check skipped"}, nil
 	}
 
 	out := make([]geo.Point, 0, len(points))
@@ -63,7 +63,7 @@ func (g ReachabilityGuard) Apply(_ context.Context, points []geo.Point) ([]geo.P
 		return out, nil, nil
 	}
 	return out, []string{fmt.Sprintf(
-		"reachability_guard: упаковка создала невозможные переходы, возвращено точек: %d", restored)}, nil
+		"reachability_guard: packing created impossible transitions, %d points restored", restored)}, nil
 }
 
 // embed — позиции точек `got` внутри `full` при условии, что `got` является её

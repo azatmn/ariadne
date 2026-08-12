@@ -632,7 +632,7 @@ func TestPool_MarksPoisonousTaskFailed(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 
 	_, _, failed := spy.snapshot()
-	assert.Contains(t, failed["poison-1"], "попыт",
+	assert.Contains(t, failed["poison-1"], "attempts",
 		"причина обязана объяснять, почему задачу перестали пробовать: %q", failed["poison-1"])
 
 	cancel()

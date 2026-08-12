@@ -65,7 +65,7 @@ func (c *Client) Snap(ctx context.Context, pts []geo.Point) (snap []float64, ok 
 	// а ветвление не порождает горутины без счёта.
 	for len(queue) > 0 {
 		if err := ctx.Err(); err != nil {
-			warnings = append(warnings, fmt.Sprintf("snap: прервано: %v", err))
+			warnings = append(warnings, fmt.Sprintf("snap: interrupted: %v", err))
 			return snap, ok, warnings
 		}
 
@@ -140,7 +140,7 @@ func (c *Client) Snap(ctx context.Context, pts []geo.Point) (snap []float64, ok 
 
 	if failed > 0 {
 		warnings = append(warnings, fmt.Sprintf(
-			"snap: не удалось получить снэп для %d точек из %d (%s)",
+			"snap: no snap for %d of %d points (%s)",
 			failed, len(pts), firstErr))
 	}
 	return snap, ok, warnings
@@ -176,7 +176,7 @@ func (c *Client) snapSpan(ctx context.Context, pts []geo.Point) ([]float64, erro
 		return nil, fmt.Errorf("osrm: snap code %q", r.Code)
 	}
 	if len(r.Waypoints) != len(pts) {
-		return nil, fmt.Errorf("osrm: snap: ждали %d точек, пришло %d",
+		return nil, fmt.Errorf("osrm: snap: expected %d points, got %d",
 			len(pts), len(r.Waypoints))
 	}
 

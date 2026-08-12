@@ -330,7 +330,7 @@ func TestStatus_DoneCarriesDegradedAndWarnings(t *testing.T) {
 		Key: "kd", Status: taskstore.StatusDone,
 		Result: "cleaned", LengthMeters: 971034.2,
 		Degraded: true,
-		Warnings: []string{"fill_gaps: кончился бюджет, 35 дыр из 294 осталось прямыми — километраж занижен"},
+		Warnings: []string{"fill_gaps: budget spent, 35 of 294 gaps left straight — mileage understated"},
 	})
 
 	rec := serve(t, router, http.MethodGet, "/v1/tasks/kd", "")
@@ -342,7 +342,7 @@ func TestStatus_DoneCarriesDegradedAndWarnings(t *testing.T) {
 	assert.Equal(t, "done", resp.Status, "статус обязан остаться прежним")
 	assert.True(t, resp.Degraded, "оговорка обязана дойти до клиента")
 	assert.Len(t, resp.Warnings, 1)
-	assert.Contains(t, resp.Warnings[0], "километраж занижен")
+	assert.Contains(t, resp.Warnings[0], "mileage understated")
 }
 
 // У исправной задачи оговорки в ответе быть не должно — ни поля, ни пустого

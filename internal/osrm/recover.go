@@ -32,5 +32,5 @@ import (
 func panicErr(ctx context.Context, where string, r any) error {
 	logger.FromContext(ctx).Error("panic in osrm goroutine",
 		"where", where, "panic", r, "stack", string(debug.Stack()))
-	return fmt.Errorf("%s: сбой при разборе ответа: %v", where, r)
+	return fmt.Errorf("%s: failed while parsing the response: %v", where, r)
 }

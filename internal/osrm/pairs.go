@@ -71,7 +71,7 @@ func (c *Client) PairDistance(ctx context.Context, pairs []Pair) (dist []float64
 				ok[i] = false
 			}
 			dist = make([]float64, len(pairs))
-			warnings = append(warnings, "pairs: /table закрыт, перешли на /route")
+			warnings = append(warnings, "pairs: /table is closed, fell back to /route")
 		} else {
 			return dist, ok, warnings
 		}
@@ -147,7 +147,7 @@ func (c *Client) pairsByTable(ctx context.Context, pairs []Pair, dist []float64,
 			var r tableResponse
 			if err := json.Unmarshal(body, &r); err != nil || r.Code != "Ok" {
 				mu.Lock()
-				warn = append(warn, fmt.Sprintf("table: негодный ответ: %v", err))
+				warn = append(warn, fmt.Sprintf("table: malformed response: %v", err))
 				mu.Unlock()
 				return
 			}
@@ -190,11 +190,11 @@ func (c *Client) pairsByTable(ctx context.Context, pairs []Pair, dist []float64,
 // Строки за пределами первых 2m не смотрим: лишние клетки нам не мешают.
 func matrixShape(rows [][]float64, m int) string {
 	if len(rows) < 2*m {
-		return fmt.Sprintf("матрица %d строк вместо %d", len(rows), 2*m)
+		return fmt.Sprintf("matrix has %d rows instead of %d", len(rows), 2*m)
 	}
 	for i := range 2 * m {
 		if len(rows[i]) < 2*m {
-			return fmt.Sprintf("в строке %d матрицы %d чисел вместо %d",
+			return fmt.Sprintf("matrix row %d has %d numbers instead of %d",
 				i, len(rows[i]), 2*m)
 		}
 	}
@@ -271,14 +271,14 @@ func (c *Client) pairsByRoute(ctx context.Context, pairs []Pair, dist []float64,
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
-			return []string{fmt.Sprintf("pairs: прервано на %d паре из %d", i, len(pairs))}
+			return []string{fmt.Sprintf("pairs: interrupted at pair %d of %d", i, len(pairs))}
 		}
 	}
 	close(jobs)
 	wg.Wait()
 
 	if failed > 0 {
-		return []string{fmt.Sprintf("pairs: нет пути для %d пар из %d (%s)",
+		return []string{fmt.Sprintf("pairs: no route for %d of %d pairs (%s)",
 			failed, len(pairs), first)}
 	}
 	return nil

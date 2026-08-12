@@ -151,7 +151,7 @@ func (s *Store) Dequeue(ctx context.Context) (Claim, error) {
 		// Запись есть, а номерка в ней нет — читать нечего. Расписываемся,
 		// чтобы она не висела в выданных вечно и не мешала уборщику.
 		_ = s.rdb.XAck(ctx, streamKey, groupName, msg.ID).Err()
-		return Claim{}, fmt.Errorf("taskstore: dequeue: запись %s без номерка", msg.ID)
+		return Claim{}, fmt.Errorf("taskstore: dequeue: entry %s has no task key", msg.ID)
 	}
 	return Claim{TaskKey: key, ID: msg.ID}, nil
 }

@@ -96,7 +96,7 @@ const (
 // спуфинг накручивает километраж кратно (на `bd6a0ad0` 3000 км сырых против
 // 288 очищенных), и такой ответ увёл бы расчёт куда дальше, чем отсутствие
 // ответа. Пусть Laravel повторит, когда маршрутизатор придёт в себя.
-var ErrSnapsTooFew = errors.New("core: маршрутизатор ответил про слишком мало точек")
+var ErrSnapsTooFew = errors.New("core: router answered for too few points")
 
 // Snapper — то, что умеет сказать, насколько точка отстоит от дорожной сети.
 // Интерфейс, а не клиент: ядро проверяется без сети.
@@ -264,7 +264,7 @@ func (c *Core) Run(ctx context.Context, pts []geo.Point) ([]int, Report, error) 
 	if c.Snap != nil {
 		rep.SnapFraction = snapFraction(ok)
 		if rep.SnapFraction < SnapMinFraction {
-			return nil, rep, fmt.Errorf("%w: %.0f%% из %d точек (нужно %.0f%%)",
+			return nil, rep, fmt.Errorf("%w: %.0f%% of %d points (need %.0f%%)",
 				ErrSnapsTooFew, rep.SnapFraction*100, len(sub), SnapMinFraction*100)
 		}
 	}

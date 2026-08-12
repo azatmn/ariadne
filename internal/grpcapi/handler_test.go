@@ -224,7 +224,7 @@ func TestGetTask_DoneCarriesDegradedAndWarnings(t *testing.T) {
 		Key: "dg", Status: taskstore.StatusDone,
 		Result: "cleaned", LengthMeters: 971034.2,
 		Degraded: true,
-		Warnings: []string{"fill_gaps: кончился бюджет — километраж занижен"},
+		Warnings: []string{"fill_gaps: budget spent — mileage understated"},
 	})
 
 	resp, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "dg"})
@@ -233,7 +233,7 @@ func TestGetTask_DoneCarriesDegradedAndWarnings(t *testing.T) {
 	assert.Equal(t, "done", resp.GetStatus(), "статус обязан остаться прежним")
 	assert.True(t, resp.GetDegraded())
 	require.Len(t, resp.GetWarnings(), 1)
-	assert.Contains(t, resp.GetWarnings()[0], "километраж занижен")
+	assert.Contains(t, resp.GetWarnings()[0], "mileage understated")
 }
 
 // taskKeys — ключи, появившиеся ИЗ-ЗА запроса.

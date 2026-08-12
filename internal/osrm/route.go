@@ -81,7 +81,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	a := geo.Point{Lon: 37.6173, Lat: 55.7558}
 	b := geo.Point{Lon: 37.6273, Lat: 55.7658}
 	if _, ok := c.RouteGeometry(ctx, a, b); !ok {
-		return fmt.Errorf("osrm: %s не отвечает или не строит маршруты", c.baseURL)
+		return fmt.Errorf("osrm: %s is unreachable or cannot build routes", c.baseURL)
 	}
 	return nil
 }

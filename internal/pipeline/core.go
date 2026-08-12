@@ -100,7 +100,7 @@ func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []str
 		// занижен. Предупреждения мало — его можно не прочитать; признак
 		// неполноты читается машиной.
 		c.markDegraded()
-		return points, []string{"core: движок не задан, чистка пропущена"}, nil
+		return points, []string{"core: engine not configured, cleaning skipped"}, nil
 	}
 
 	keep, rep, err := c.Engine.Run(ctx, points)

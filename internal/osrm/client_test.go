@@ -741,7 +741,7 @@ func TestSnap_FailedCountNeverExceedsTotal(t *testing.T) {
 	}
 	require.Zero(t, answered, "сервер отказал на всё — отвечено не должно быть ни про одну точку")
 	require.Len(t, warns, 1)
-	assert.Contains(t, warns[0], "для 20 точек из 20",
+	assert.Contains(t, warns[0], "for 20 of 20 points",
 		"счёт обязан сходиться, а не складывать перекрывающиеся куски: %q", warns[0])
 }
 
@@ -777,7 +777,7 @@ func TestSnap_FailedCountMatchesUnanswered(t *testing.T) {
 		return
 	}
 	require.Len(t, warns, 1)
-	assert.Contains(t, warns[0], fmt.Sprintf("для %d точек из %d", missing, len(pts)),
+	assert.Contains(t, warns[0], fmt.Sprintf("for %d of %d points", missing, len(pts)),
 		"в жалобе обязано стоять реальное число неотвеченных: %q", warns[0])
 }
 
