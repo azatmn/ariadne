@@ -204,7 +204,7 @@ func TestFill_TooBigDetourRejected(t *testing.T) {
 
 	assert.Equal(t, pts, got, "прямая остаётся как есть")
 	assert.Zero(t, st.Fill.Filled)
-	assert.Equal(t, 1, st.Fill.Reasons["крюк"])
+	assert.Equal(t, 1, st.Fill.Reasons["detour"])
 }
 
 func TestFill_DetourThresholdsAreInclusive(t *testing.T) {
@@ -241,7 +241,7 @@ func TestFill_PhysicsRejectsImpossibleRoute(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, pts, got)
-	assert.Equal(t, 1, st.Fill.Reasons["физика"])
+	assert.Equal(t, 1, st.Fill.Reasons["physics"])
 }
 
 func TestFill_SlackCoversShortGaps(t *testing.T) {
@@ -268,7 +268,7 @@ func TestFill_NoRouteLeavesStraight(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, pts, got)
-	assert.Equal(t, 1, st.Fill.Reasons["нет пути"])
+	assert.Equal(t, 1, st.Fill.Reasons["no route"])
 }
 
 // ------------------------------------------------------ времена и пометки

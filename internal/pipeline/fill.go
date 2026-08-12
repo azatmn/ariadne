@@ -312,12 +312,11 @@ func budgetSpent(ctx context.Context) (bool, error) {
 	}
 }
 
-// Названия причин ниже — ЕДИНСТВЕННЫЕ строки на русском в рабочем коде, и это
-// не недосмотр. Они не текст лога, а ДАННЫЕ: попадают в `extra.reasons` и
-// сверяются с эталоном от прототипа по золотым векторам, где записаны
-// по-русски (`goldenfill_test.go`). Перевести их — значит либо городить
-// переводчик в сверке, либо пересобирать эталон, меняя сам прототип; цена
-// несопоставима с пользой от единообразия.
+// Названия причин — ДАННЫЕ, а не текст: они уезжают в `extra.reasons` и
+// сверяются с эталоном от прототипа по золотым векторам. Менять их в одном Go
+// нельзя — только вместе с прототипом и пересборкой векторов (сделано
+// 2026-08-12: пересобрали, сверили — кроме самих названий не изменилось
+// ничего).
 //
 // fillVerdict — принять дорисовку или оставить прямую.
 //
@@ -327,20 +326,20 @@ func budgetSpent(ctx context.Context) (bool, error) {
 // крюк ни о чём не говорит.
 func fillVerdict(gapSec float64, r *osrm.Route, line float64) (bool, string) {
 	if r == nil {
-		return false, "нет пути"
+		return false, "no route"
 	}
 	if line > 0 {
 		switch detour := r.Distance / line; {
 		case detour <= FreeDetour:
-			return true, "принято"
+			return true, "accepted"
 		case detour > MaxDetour:
-			return false, "крюк"
+			return false, "detour"
 		}
 	}
 	if r.Distance > gapSec*FillVmaxKmh/3.6+FillSlackM {
-		return false, "физика"
+		return false, "physics"
 	}
-	return true, "принято"
+	return true, "accepted"
 }
 
 // weave вплетает дорисованную геометрию в трек.
