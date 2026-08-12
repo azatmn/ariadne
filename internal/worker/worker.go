@@ -30,9 +30,25 @@ type notifier interface {
 	Notify(ctx context.Context, taskKey, status string) error
 }
 
+// store — то, что воркеру нужно от хранилища задач. В проде это
+// *taskstore.Store.
+//
+// Интерфейс, а не конкретный тип, ради одной проверки, которую иначе не
+// написать: «результат не сохранился — расписку не даём». Поддельный Redis
+// умеет ломаться только целиком, и на нём такая проверка проходит по ложной
+// причине — не потому, что расписки не было, а потому, что она тоже не
+// прошла. Мутация это показала: перенос расписки ПЕРЕД сохранением оставлял
+// все тесты зелёными, хотя терял задачу ровно так же, как старая очередь.
+type store interface {
+	Dequeue(ctx context.Context) (taskstore.Claim, error)
+	Get(ctx context.Context, taskKey string) (*taskstore.Task, error)
+	Update(ctx context.Context, task *taskstore.Task) error
+	Ack(ctx context.Context, c taskstore.Claim) error
+}
+
 // Pool — пул воркеров.
 type Pool struct {
-	store   *taskstore.Store
+	store   store
 	svc     resolver
 	notify  notifier
 	logger  *slog.Logger
@@ -44,7 +60,7 @@ type Pool struct {
 }
 
 // New собирает пул. Реально воркеры стартуют в Start.
-func New(store *taskstore.Store, svc resolver, notify notifier, logger *slog.Logger, workers int, timeout time.Duration, limits codec.Limits) *Pool {
+func New(store store, svc resolver, notify notifier, logger *slog.Logger, workers int, timeout time.Duration, limits codec.Limits) *Pool {
 	return &Pool{
 		store:   store,
 		svc:     svc,

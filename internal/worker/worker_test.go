@@ -113,12 +113,12 @@ func newTestStore(t *testing.T) *taskstore.Store {
 	return s
 }
 
-func newPool(t *testing.T, store *taskstore.Store, r resolver, taskTimeout time.Duration) *Pool {
+func newPool(t *testing.T, store store, r resolver, taskTimeout time.Duration) *Pool {
 	t.Helper()
 	return newPoolN(t, store, r, noopNotifier{}, taskTimeout)
 }
 
-func newPoolN(t *testing.T, store *taskstore.Store, r resolver, n notifier, taskTimeout time.Duration) *Pool {
+func newPoolN(t *testing.T, store store, r resolver, n notifier, taskTimeout time.Duration) *Pool {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(store, r, n, logger, 1, taskTimeout,
@@ -432,49 +432,49 @@ func TestPool_CarriesDegradedAndWarningsToCard(t *testing.T) {
 	pool.Shutdown(shCtx)
 }
 
-// breakerResolver ломает Redis ровно между чтением карточки и записью
-// результата. Так ведёт себя моргнувшая сеть: карточка прочиталась, работа
-// сделана, а сохранить её уже некуда.
-type breakerResolver struct {
-	mr *miniredis.Miniredis
-}
-
-func (b breakerResolver) Resolve(_ context.Context, points []geo.Point) (*service.Result, error) {
-	b.mr.SetError("LOADING redis is loading the dataset in memory")
-	return &service.Result{Points: points, LengthMeters: 42}, nil
-}
-
-// Результат не сохранился — значит задача НЕ доведена до конца и обязана
-// остаться числиться за воркером.
+// brokenSaveStore — хранилище, у которого падает ТОЛЬКО сохранение.
 //
-// Это главное свойство всей замены очереди, и проверять его надо прицельно.
-// Мутация показала почему: если расписаться ДО сохранения, все остальные тесты
-// остаются зелёными — а задача при этом теряется навсегда, ровно как раньше.
-func TestProcess_KeepsClaimWhenSaveFails(t *testing.T) {
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-	t.Cleanup(mr.Close)
+// Настоящий поддельный Redis так не умеет: он ломается целиком, и тогда не
+// проходит ни запись, ни расписка — проверка становится бессмысленной, потому
+// что задача остаётся выданной по неверной причине.
+type brokenSaveStore struct {
+	card  *taskstore.Task
+	acked int
+}
 
-	store := taskstore.New(mr.Addr(), 0, "", time.Hour)
-	ctx := context.Background()
-	require.NoError(t, store.EnsureQueue(ctx))
+func (s *brokenSaveStore) Dequeue(context.Context) (taskstore.Claim, error) {
+	return taskstore.Claim{}, taskstore.ErrNoTask
+}
 
-	saveTask(t, store, "lost", validInput(t))
-	require.NoError(t, store.Enqueue(ctx, "lost"))
+func (s *brokenSaveStore) Get(context.Context, string) (*taskstore.Task, error) {
+	return s.card, nil
+}
 
-	claim, err := store.Dequeue(ctx)
-	require.NoError(t, err)
+func (s *brokenSaveStore) Update(context.Context, *taskstore.Task) error {
+	return errors.New("redis: connection reset by peer")
+}
 
-	pool := newPool(t, store, breakerResolver{mr: mr}, 10*time.Second)
-	pool.process(claim)
+func (s *brokenSaveStore) Ack(context.Context, taskstore.Claim) error {
+	s.acked++
+	return nil
+}
 
-	// Redis снова в строю — смотрим, чем всё кончилось.
-	mr.SetError("")
+// Результат не сохранился — значит задача НЕ доведена до конца, и расписки
+// быть не должно ни при каких условиях.
+//
+// Это главное свойство всей замены очереди. Мутация показала, что без прицельной
+// проверки его теряют молча: перенос расписки ПЕРЕД сохранением оставлял все
+// остальные тесты зелёными, а задачу терял ровно так же, как старая очередь.
+func TestProcess_NoAckWhenSaveFails(t *testing.T) {
+	st := &brokenSaveStore{card: &taskstore.Task{
+		Key: "lost", Status: taskstore.StatusPending, Input: validInput(t),
+	}}
+	pool := newPool(t, st, service.New(testConfig(), nil), 10*time.Second)
 
-	claimed, err := store.Claimed(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), claimed,
-		"результат не сохранён — задача обязана остаться выданной, чтобы её вернули в работу")
+	pool.process(taskstore.Claim{TaskKey: "lost", ID: "1-0"})
+
+	assert.Zero(t, st.acked,
+		"результат не сохранён — расписываться нельзя, иначе задачу никто не вернёт в работу")
 }
 
 // Зеркальный случай: всё прошло успешно — задача не должна оставаться висеть.
