@@ -574,6 +574,60 @@ func TestPairDistance_RejectsTruncatedMatrix(t *testing.T) {
 	assert.NotEmpty(t, warns)
 }
 
+// Матрица нужной ВЫСОТЫ, но строки короткие.
+//
+// Так ответит балансировщик, отдающий чужой ответ, или сборка OSRM, которую
+// позвали с `sources`/`destinations`: строк столько, сколько просили, а чисел
+// в каждой — по числу целей, а не источников. Проверка высоты такое пропускает,
+// и обращение `distances[i][m+i]` читает за концом строки.
+//
+// Цена ошибки — не порченый ответ, а упавший сервис: паника происходит в
+// дочерней горутине, и `recover` воркера, который обязан превращать панику в
+// упавшую задачу, до неё не достаёт.
+func TestPairDistance_RejectsShortMatrixRows(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Contains(t, r.URL.Path, "/table/")
+		_, _ = w.Write([]byte(`{"code":"Ok","distances":[[0],[0],[0],[0]]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(3)
+	dist, ok, warns := c.PairDistance(context.Background(),
+		[]Pair{{A: pts[0], B: pts[1]}, {A: pts[1], B: pts[2]}})
+
+	assert.False(t, ok[0], "короткая строка — это не ответ")
+	assert.False(t, ok[1])
+	assert.Zero(t, dist[0])
+	assert.NotEmpty(t, warns, "негодная форма матрицы обязана попасть в предупреждения")
+}
+
+// Рваная матрица: высота верная, первые строки полные, одна короче.
+//
+// Отдельный случай от предыдущего: проверять надо КАЖДУЮ нужную строку, а не
+// первую и не самую длинную. Иначе ошибка проявится только на некоторых треках
+// и будет выглядеть случайной.
+func TestPairDistance_RejectsRaggedMatrixRows(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Contains(t, r.URL.Path, "/table/")
+		_, _ = w.Write([]byte(`{"code":"Ok","distances":[` +
+			`[0,0,100,999],` +
+			`[0,0,999,200],` +
+			`[100,999,0,0],` +
+			`[999,200]]}`)) // последняя строка обрезана
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(3)
+	_, ok, warns := c.PairDistance(context.Background(),
+		[]Pair{{A: pts[0], B: pts[1]}, {A: pts[1], B: pts[2]}})
+
+	assert.False(t, ok[0])
+	assert.False(t, ok[1])
+	assert.NotEmpty(t, warns)
+}
+
 func TestRouteGeometry_RejectsMalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":`))

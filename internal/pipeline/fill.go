@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
 	"ariadne/internal/geo"
+	"ariadne/internal/logger"
 	"ariadne/internal/osrm"
 )
 
@@ -240,6 +242,17 @@ func (f FillGaps) ask(ctx context.Context, points []geo.Point, gaps []gap) ([]*o
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Паника в дочерней горутине проходит мимо `recover` воркера — он
+			// ловит только в своей — и валит ВЕСЬ процесс вместе с чужими
+			// задачами. Здесь она стоит недорисованной дыры: путь остаётся
+			// пустым, вердикт по нему будет «нет пути», то есть прямая. Это
+			// уже предусмотренный случай, ровно как при исчерпании бюджета.
+			defer func() {
+				if r := recover(); r != nil {
+					logger.FromContext(ctx).Error("panic in fill worker",
+						"panic", r, "stack", string(debug.Stack()))
+				}
+			}()
 			for k := range jobs {
 				g := gaps[k]
 				if r, ok := f.Routes.RouteGeometry(ctx, points[g.at], points[g.at+1]); ok {

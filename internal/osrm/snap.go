@@ -78,6 +78,15 @@ func (c *Client) Snap(ctx context.Context, pts []geo.Point) (snap []float64, ok 
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				// Паника здесь стала бы ошибкой куска: его поделят пополам,
+				// как любой неудавшийся батч, и в худшем случае точки уйдут
+				// в «не удалось получить снэп». Дробление ограничено
+				// `maxSplitDepth`, так что вечного круга не выйдет.
+				defer func() {
+					if r := recover(); r != nil {
+						errs[k] = panicErr(ctx, "snap", r)
+					}
+				}()
 				results[k], errs[k] = c.snapSpan(ctx, pts[sp.lo:sp.hi])
 			}()
 		}

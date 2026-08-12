@@ -103,6 +103,13 @@ func (c *Client) pairsByTable(ctx context.Context, pairs []Pair, dist []float64,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					mu.Lock()
+					warn = append(warn, panicErr(ctx, "table", r).Error())
+					mu.Unlock()
+				}
+			}()
 			if err := ctx.Err(); err != nil {
 				return
 			}
@@ -144,10 +151,9 @@ func (c *Client) pairsByTable(ctx context.Context, pairs []Pair, dist []float64,
 				mu.Unlock()
 				return
 			}
-			if len(r.Distances) < 2*m {
+			if bad := matrixShape(r.Distances, m); bad != "" {
 				mu.Lock()
-				warn = append(warn, fmt.Sprintf(
-					"table: матрица %d строк вместо %d", len(r.Distances), 2*m))
+				warn = append(warn, "table: "+bad)
 				mu.Unlock()
 				return
 			}
@@ -165,6 +171,34 @@ func (c *Client) pairsByTable(ctx context.Context, pairs []Pair, dist []float64,
 	}
 	wg.Wait()
 	return warn
+}
+
+// matrixShape проверяет, что из матрицы можно читать диагональ начал и концов.
+// Возвращает описание беды или пустую строку, если форма годная.
+//
+// Читаем мы клетки `[i][m+i]` и `[m+i][i]` для каждой пары i, то есть трогаем
+// все 2m строк и в каждой доходим до столбца 2m-1. Значит и требовать надо
+// именно это: 2m строк, и в КАЖДОЙ не меньше 2m чисел.
+//
+// Проверять одну высоту мало, и это не теория. Матрица нужной высоты с
+// короткими строками приходит от балансировщика, отдавшего чужой ответ, и от
+// OSRM, которого позвали с `sources`/`destinations`: строк столько, сколько
+// просили, а чисел в строке — по числу целей. Обращение за конец строки роняло
+// не задачу, а весь процесс: паника случается в дочерней горутине, куда
+// `recover` воркера не достаёт.
+//
+// Строки за пределами первых 2m не смотрим: лишние клетки нам не мешают.
+func matrixShape(rows [][]float64, m int) string {
+	if len(rows) < 2*m {
+		return fmt.Sprintf("матрица %d строк вместо %d", len(rows), 2*m)
+	}
+	for i := range 2 * m {
+		if len(rows[i]) < 2*m {
+			return fmt.Sprintf("в строке %d матрицы %d чисел вместо %d",
+				i, len(rows[i]), 2*m)
+		}
+	}
+	return ""
 }
 
 // pairsByRoute — по одному запросу на направление.
@@ -191,6 +225,15 @@ func (c *Client) pairsByRoute(ctx context.Context, pairs []Pair, dist []float64,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					mu.Lock()
+					if first == "" {
+						first = panicErr(ctx, "route", r).Error()
+					}
+					mu.Unlock()
+				}
+			}()
 			for i := range jobs {
 				if err := ctx.Err(); err != nil {
 					return
