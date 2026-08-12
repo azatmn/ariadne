@@ -747,10 +747,12 @@ func TestSnap_FailedCountNeverExceedsTotal(t *testing.T) {
 
 // Часть точек ответилась — в счёте ровно те, что нет.
 func TestSnap_FailedCountMatchesUnanswered(t *testing.T) {
-	var n int
+	// Счётчик атомарный: обработчик зовётся из нескольких горутин сразу, и
+	// обычный int здесь — гонка. Ошибка обычная и тихая: без -race тест
+	// проходит и врёт.
+	var n atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n++
-		if n == 1 { // первый батч валим целиком, остальные отвечают
+		if n.Add(1) == 1 { // первый батч валим целиком, остальные отвечают
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"code":"NoSegment"}`))
 			return
