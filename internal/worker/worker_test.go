@@ -707,3 +707,63 @@ func TestPool_NotifiesAboutPoisonousTask(t *testing.T) {
 	defer shCancel()
 	pool.Shutdown(shCtx)
 }
+
+// doneCardStore — карточка уже готова: результат посчитан и сохранён.
+type doneCardStore struct {
+	*reclaimSpy
+	mu      sync.Mutex
+	updated *taskstore.Task
+}
+
+func (d *doneCardStore) Get(_ context.Context, key string) (*taskstore.Task, error) {
+	return &taskstore.Task{
+		Key: key, Status: taskstore.StatusDone,
+		Result: "готовый-результат", LengthMeters: 12345,
+	}, nil
+}
+
+func (d *doneCardStore) Update(_ context.Context, task *taskstore.Task) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.updated = task
+	return nil
+}
+
+func (d *doneCardStore) saved() *taskstore.Task {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.updated
+}
+
+// Готовый результат нельзя объявлять неудачей.
+//
+// Сценарий: задача обработана, результат СОХРАНЁН, а расписка не прошла —
+// Redis моргнул. Задачу выдадут снова; если не повезёт пять раз подряд,
+// уборщик признает её ядовитой. Переписывать карточку тут нельзя: работа
+// сделана, ответ лежит. Иначе выйдет и потеря верного ответа, и противоречивая
+// карточка — `failed` с заполненным результатом.
+func TestPool_DoesNotFailAlreadyFinishedTask(t *testing.T) {
+	old := reclaimInterval
+	reclaimInterval = 20 * time.Millisecond
+	t.Cleanup(func() { reclaimInterval = old })
+
+	st := &doneCardStore{reclaimSpy: newReclaimSpy("already-done")}
+	notes := &recordingNotifier{}
+	pool := newPoolN(t, st, service.New(testConfig(), nil), notes, time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+
+	require.Eventually(t, func() bool {
+		n, _, _ := st.snapshot()
+		return n >= 2 // уборщик отработал минимум дважды
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+
+	assert.Nil(t, st.saved(),
+		"готовую карточку трогать нельзя: работа сделана, ответ лежит")
+}

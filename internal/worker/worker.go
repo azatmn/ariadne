@@ -149,6 +149,17 @@ func (p *Pool) failPoisoned(taskKey string) {
 		p.logger.Error("poisoned task: get failed", "taskKey", taskKey, "error", err)
 		return
 	}
+	// Готовую карточку не трогаем. Задача могла быть посчитана и СОХРАНЕНА, а
+	// расписка не пройти — Redis моргнул. Тогда её выдадут снова, и после пяти
+	// таких невезений уборщик признает её ядовитой. Переписать здесь значило бы
+	// объявить неудачей готовый ответ и оставить противоречивую карточку:
+	// `failed` с заполненным результатом.
+	if card.Status != taskstore.StatusPending {
+		p.logger.Warn("poisoned task is already finished, leaving it alone",
+			"taskKey", taskKey, "status", card.Status)
+		return
+	}
+
 	card.Status = taskstore.StatusFailed
 	card.Error = fmt.Sprintf("task dropped after %d attempts: processing broke off every time", maxAttempts)
 	if err := p.store.Update(opCtx, card); err != nil {
