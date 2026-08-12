@@ -405,3 +405,45 @@ func (p plainSpy) Apply(ctx context.Context, pts []geo.Point) ([]geo.Point, []st
 	}
 	return p.inner.Apply(ctx, pts)
 }
+
+// --- признак «результат неполный» ---------------------------------------
+
+// degradedTrack — ровная езда по прямой, десять минут с шагом в минуту.
+// Ничего особенного: нужен просто трек, который конвейер пройдёт целиком.
+func degradedTrack() []geo.Point {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	pts := make([]geo.Point, 10)
+	for i := range pts {
+		pts[i] = geo.Point{
+			Time: t0.Add(time.Duration(i) * time.Minute),
+			Lon:  37.6173 + float64(i)*0.01,
+			Lat:  55.7558,
+		}
+	}
+	return pts
+}
+
+// Без маршрутизатора чистка и дорисовка пропускают трек насквозь. Результат
+// при этом отдаётся, но он не тот, каким должен быть: спуфинг не убран,
+// километраж занижен на дырах. Отдавать такое молча нельзя.
+func TestRunState_DegradedWithoutRouter(t *testing.T) {
+	pl := New(Params{SimplifyMinMeters: 5}, nil)
+	out, warnings, _, err := pl.Run(context.Background(), degradedTrack())
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+
+	assert.True(t, pl.State().Degraded,
+		"без маршрутизатора результат неполный — это обязано быть видно вызывающему")
+	assert.NotEmpty(t, warnings, "и сказано словами")
+}
+
+// С исправным маршрутизатором и достаточным бюджетом оговорок быть не должно:
+// иначе пометка обесценится и её перестанут читать.
+func TestRunState_NotDegradedOnHealthyRun(t *testing.T) {
+	pl := New(Params{SimplifyMinMeters: 5}, pipeRouter{})
+	_, _, _, err := pl.Run(context.Background(), degradedTrack())
+	require.NoError(t, err)
+
+	assert.False(t, pl.State().Degraded,
+		"исправный прогон не должен помечаться неполным")
+}

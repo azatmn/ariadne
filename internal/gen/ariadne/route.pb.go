@@ -160,8 +160,17 @@ type GetTaskResponse struct {
 	RouteCompressed string                 `protobuf:"bytes,3,opt,name=route_compressed,json=routeCompressed,proto3" json:"route_compressed,omitempty"` // при done
 	LengthMeters    float64                `protobuf:"fixed64,4,opt,name=length_meters,json=lengthMeters,proto3" json:"length_meters,omitempty"`        // при done
 	Error           string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`                                            // при failed
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Километражу верить с оговоркой: результат настоящий, но неполный —
+	// конвейеру не хватило времени или не был задан маршрутизатор, и часть дыр
+	// осталась прямыми через поля.
+	//
+	// Отдельным полем, а НЕ новым значением status: новое значение сломало бы
+	// живого клиента, который сверяется с "done".
+	Degraded bool `protobuf:"varint,6,opt,name=degraded,proto3" json:"degraded,omitempty"` // при done
+	// Та же оговорка словами, для человека при разборе.
+	Warnings      []string `protobuf:"bytes,7,rep,name=warnings,proto3" json:"warnings,omitempty"` // при done
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetTaskResponse) Reset() {
@@ -227,6 +236,20 @@ func (x *GetTaskResponse) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *GetTaskResponse) GetDegraded() bool {
+	if x != nil {
+		return x.Degraded
+	}
+	return false
+}
+
+func (x *GetTaskResponse) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
 }
 
 type GetTaskDebugRequest struct {
@@ -412,13 +435,15 @@ const file_route_proto_rawDesc = "" +
 	"\x12SubmitTaskResponse\x12\x19\n" +
 	"\btask_key\x18\x01 \x01(\tR\ataskKey\"+\n" +
 	"\x0eGetTaskRequest\x12\x19\n" +
-	"\btask_key\x18\x01 \x01(\tR\ataskKey\"\xaa\x01\n" +
+	"\btask_key\x18\x01 \x01(\tR\ataskKey\"\xe2\x01\n" +
 	"\x0fGetTaskResponse\x12\x19\n" +
 	"\btask_key\x18\x01 \x01(\tR\ataskKey\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12)\n" +
 	"\x10route_compressed\x18\x03 \x01(\tR\x0frouteCompressed\x12#\n" +
 	"\rlength_meters\x18\x04 \x01(\x01R\flengthMeters\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"0\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x1a\n" +
+	"\bdegraded\x18\x06 \x01(\bR\bdegraded\x12\x1a\n" +
+	"\bwarnings\x18\a \x03(\tR\bwarnings\"0\n" +
 	"\x13GetTaskDebugRequest\x12\x19\n" +
 	"\btask_key\x18\x01 \x01(\tR\ataskKey\"w\n" +
 	"\x14GetTaskDebugResponse\x12\x19\n" +

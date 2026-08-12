@@ -142,6 +142,11 @@ func (f FillGaps) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, [
 		return points, nil, nil
 	}
 	if f.Routes == nil {
+		// Дыры остаются прямыми через поля — километраж занижен ровно на
+		// разницу между дорогой и хордой.
+		if f.State != nil {
+			f.State.Degraded = true
+		}
 		return points, []string{"fill_gaps: источник путей не задан, дыры оставлены прямыми"}, nil
 	}
 
@@ -433,4 +438,7 @@ func (f FillGaps) save(rep FillReport, synthetic []bool) {
 	}
 	f.State.Fill = rep
 	f.State.Synthetic = synthetic
+	if rep.Degraded {
+		f.State.Degraded = true
+	}
 }

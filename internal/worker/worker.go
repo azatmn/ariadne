@@ -219,5 +219,11 @@ func (p *Pool) fill(ctx context.Context, card *taskstore.Task) error {
 	card.Result = compressed
 	card.LengthMeters = res.LengthMeters
 	card.Debug = res.Stats
+
+	// Оговорка к километражу. Раньше терялась ровно здесь: конвейер знал, что
+	// результат неполный, сервис это отдавал, а в карточку не клалось — и
+	// клиент получал заниженную цифру со статусом «готово» и без единого слова.
+	card.Degraded = res.Degraded
+	card.Warnings = res.Warnings
 	return nil
 }

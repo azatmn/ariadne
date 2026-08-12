@@ -212,3 +212,25 @@ func TestGetTaskDebug_PendingEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetDebug())
 }
+
+// Та же оговорка к километражу в gRPC. Проверяется отдельно от REST не для
+// симметрии: маппинг в gRPC пишется руками, и поле, забытое здесь, останется
+// нулевым — сборка не сломается, и никто не заметит. Так уже терялись `Extra`
+// и `Error` в разборе по стадиям.
+func TestGetTask_DoneCarriesDegradedAndWarnings(t *testing.T) {
+	h, store, _ := newHandler(t)
+	saveCard(t, store, &taskstore.Task{
+		Key: "dg", Status: taskstore.StatusDone,
+		Result: "cleaned", LengthMeters: 971034.2,
+		Degraded: true,
+		Warnings: []string{"fill_gaps: кончился бюджет — километраж занижен"},
+	})
+
+	resp, err := h.GetTask(context.Background(), &ariadnepb.GetTaskRequest{TaskKey: "dg"})
+	require.NoError(t, err)
+
+	assert.Equal(t, "done", resp.GetStatus(), "статус обязан остаться прежним")
+	assert.True(t, resp.GetDegraded())
+	require.Len(t, resp.GetWarnings(), 1)
+	assert.Contains(t, resp.GetWarnings()[0], "километраж занижен")
+}

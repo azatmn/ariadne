@@ -83,6 +83,8 @@ func (h *Handler) GetTask(ctx context.Context, req *ariadnepb.GetTaskRequest) (*
 	case taskstore.StatusDone:
 		resp.RouteCompressed = task.Result
 		resp.LengthMeters = task.LengthMeters
+		resp.Degraded = task.Degraded
+		resp.Warnings = task.Warnings
 	case taskstore.StatusFailed:
 		resp.Error = task.Error
 	}

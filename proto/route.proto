@@ -33,6 +33,17 @@ message GetTaskResponse {
   string route_compressed = 3;  // при done
   double length_meters = 4;     // при done
   string error = 5;             // при failed
+
+  // Километражу верить с оговоркой: результат настоящий, но неполный —
+  // конвейеру не хватило времени или не был задан маршрутизатор, и часть дыр
+  // осталась прямыми через поля.
+  //
+  // Отдельным полем, а НЕ новым значением status: новое значение сломало бы
+  // живого клиента, который сверяется с "done".
+  bool degraded = 6;            // при done
+
+  // Та же оговорка словами, для человека при разборе.
+  repeated string warnings = 7; // при done
 }
 
 message GetTaskDebugRequest {

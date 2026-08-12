@@ -49,6 +49,19 @@ type StatusResponse struct {
 	RouteCompressed string  `json:"routeCompressed,omitempty"`
 	LengthMeters    float64 `json:"lengthMeters"`
 	Error           string  `json:"error,omitempty"`
+
+	// Degraded — «километражу верить с оговоркой». Задача выполнена, результат
+	// настоящий, но неполный: конвейеру не хватило времени или не был задан
+	// маршрутизатор, и часть дыр осталась прямыми через поля.
+	//
+	// Отдельным полем, а НЕ новым значением `status`. Новое значение сломало бы
+	// живого клиента: он проверяет `status == "done"`, не совпало бы — и готовый
+	// результат ушёл бы в мусор, а задача считалась бы вечно незавершённой.
+	// Поле старый клиент просто не заметит.
+	Degraded bool `json:"degraded,omitempty"`
+
+	// Warnings — та же оговорка словами, для человека при разборе.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // DebugResponse — ответ GET /v1/tasks/{taskKey}/debug.
@@ -139,6 +152,8 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) error {
 	case taskstore.StatusDone:
 		resp.RouteCompressed = task.Result
 		resp.LengthMeters = task.LengthMeters
+		resp.Degraded = task.Degraded
+		resp.Warnings = task.Warnings
 	case taskstore.StatusFailed:
 		resp.Error = task.Error
 	}

@@ -65,6 +65,20 @@ type RunState struct {
 
 	// Fill — что дорисовка сделала с треком.
 	Fill FillReport
+
+	// Degraded — «результат неполный, мы сами знаем, что могли лучше».
+	//
+	// Один признак на весь прогон, а не три флага по углам. Причин на сегодня
+	// три: кончился бюджет у ядра, кончился у дорисовки, маршрутизатор не задан
+	// вовсе. Складывать их обязан конвейер — иначе каждый следующий потребитель
+	// будет собирать сумму сам, забудет слагаемое и молча отдаст заниженный
+	// километраж за точный. Ровно это и происходило.
+	//
+	// НЕ считается неполнотой: дыра, которую дорисовка нашла и осознанно
+	// отказалась закрывать (крюк втрое длиннее прямой, физически не проехать).
+	// Там мы сделали всё, что могли честно сделать, и оговорка обесценила бы
+	// признак.
+	Degraded bool
 }
 
 // Core — стадия чистки. Без движка пропускает точки насквозь: сервис должен
@@ -82,6 +96,10 @@ func (Core) BudgetShare() float64 { return CoreBudgetShare }
 
 func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []string, error) {
 	if c.Engine == nil {
+		// Трек уходит как пришёл: спуфинг не убран, километраж на дырах
+		// занижен. Предупреждения мало — его можно не прочитать; признак
+		// неполноты читается машиной.
+		c.markDegraded()
 		return points, []string{"core: движок не задан, чистка пропущена"}, nil
 	}
 
@@ -93,6 +111,10 @@ func (c Core) Apply(ctx context.Context, points []geo.Point) ([]geo.Point, []str
 	out := make([]geo.Point, len(keep))
 	for k, i := range keep {
 		out[k] = points[i]
+	}
+
+	if rep.Degraded {
+		c.markDegraded()
 	}
 
 	if c.State != nil {
@@ -133,4 +155,12 @@ func (r roadAdapter) PairDistance(ctx context.Context, pairs []core.Pair) ([]flo
 		conv[i] = osrm.Pair{A: p.A, B: p.B}
 	}
 	return r.inner.PairDistance(ctx, conv)
+}
+
+// markDegraded помечает прогон неполным. Отдельным методом, потому что
+// блокнота может не быть: конвейер собирают и без него.
+func (c Core) markDegraded() {
+	if c.State != nil {
+		c.State.Degraded = true
+	}
 }

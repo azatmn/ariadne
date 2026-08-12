@@ -317,3 +317,47 @@ func TestDebug_PendingEmpty(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Empty(t, resp.Debug)
 }
+
+// Оговорка к километражу доезжает до клиента и статус при этом НЕ меняется.
+//
+// Вторая половина — не придирка. Новое значение `status` вместо поля сломало бы
+// живого клиента: он сверяется с "done", не совпало бы — и готовый результат
+// ушёл бы в мусор, а задача считалась бы вечно незавершённой. Поле старый
+// клиент просто не заметит.
+func TestStatus_DoneCarriesDegradedAndWarnings(t *testing.T) {
+	router, store, _ := taskEnv(t)
+	saveCard(t, store, &taskstore.Task{
+		Key: "kd", Status: taskstore.StatusDone,
+		Result: "cleaned", LengthMeters: 971034.2,
+		Degraded: true,
+		Warnings: []string{"fill_gaps: кончился бюджет, 35 дыр из 294 осталось прямыми — километраж занижен"},
+	})
+
+	rec := serve(t, router, http.MethodGet, "/v1/tasks/kd", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp StatusResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	assert.Equal(t, "done", resp.Status, "статус обязан остаться прежним")
+	assert.True(t, resp.Degraded, "оговорка обязана дойти до клиента")
+	assert.Len(t, resp.Warnings, 1)
+	assert.Contains(t, resp.Warnings[0], "километраж занижен")
+}
+
+// У исправной задачи оговорки в ответе быть не должно — ни поля, ни пустого
+// массива: иначе клиент начнёт видеть пометку там, где её нет.
+func TestStatus_DoneWithoutDegradedOmitsFields(t *testing.T) {
+	router, store, _ := taskEnv(t)
+	saveCard(t, store, &taskstore.Task{
+		Key: "kc", Status: taskstore.StatusDone,
+		Result: "cleaned", LengthMeters: 1234.5,
+	})
+
+	rec := serve(t, router, http.MethodGet, "/v1/tasks/kc", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, "degraded")
+	assert.NotContains(t, body, "warnings")
+}

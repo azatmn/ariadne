@@ -390,3 +390,40 @@ func TestProcess_NoNotifyWhenTaskMissing(t *testing.T) {
 
 	assert.Empty(t, rec.snapshot(), "коллбэка по несуществующей задаче быть не должно")
 }
+
+// Оговорка к километражу обязана доехать от конвейера до карточки задачи.
+//
+// Сквозной тест, а не проверка присваивания: знание терялось не в одном месте,
+// а на стыке — конвейер помечал, сервис отдавал, воркер не клал. Каждый слой
+// в отдельности выглядел исправным, и клиент получал заниженный километраж со
+// статусом «готово» и без единого слова.
+//
+// Здесь маршрутизатор не задан вовсе: чистка и дорисовка пропускают трек
+// насквозь, дыры остаются прямыми через поля. Результат настоящий, но неполный
+// — ровно тот случай, ради которого пометка и заводилась.
+func TestPool_CarriesDegradedAndWarningsToCard(t *testing.T) {
+	store := newTestStore(t)
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+
+	saveTask(t, store, "deg", validInput(t))
+	require.NoError(t, store.Enqueue(context.Background(), "deg"))
+
+	var got *taskstore.Task
+	require.Eventually(t, func() bool {
+		var err error
+		got, err = store.Get(context.Background(), "deg")
+		return err == nil && got.Status == taskstore.StatusDone
+	}, 2*time.Second, 10*time.Millisecond)
+
+	assert.True(t, got.Degraded,
+		"без маршрутизатора километраж занижен — карточка обязана это сказать")
+	assert.NotEmpty(t, got.Warnings, "и объяснить словами, а не только флагом")
+
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+}

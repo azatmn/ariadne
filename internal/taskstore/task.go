@@ -29,6 +29,13 @@ type Task struct {
 	LengthMeters float64               `json:"lengthMeters,omitempty"` // длина результата, метры
 	Debug        []pipeline.StageStats `json:"debug,omitempty"`        // разбор по стадиям
 
+	// Degraded — «километражу верить с оговоркой»: конвейер отдал неполный
+	// результат (кончился бюджет, не задан маршрутизатор). Читается машиной.
+	Degraded bool `json:"degraded,omitempty"`
+
+	// Warnings — то же словами, для человека, который придёт разбираться.
+	Warnings []string `json:"warnings,omitempty"`
+
 	// Заполняется при Status == StatusFailed:
 	Error string `json:"error,omitempty"`
 }

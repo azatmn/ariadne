@@ -27,6 +27,11 @@ type Result struct {
 	BeforeCount     int
 	Warnings        []string
 	Stats           []pipeline.StageStats
+
+	// Degraded — результат неполный: конвейер знает, что мог бы лучше, но не
+	// смог (кончился бюджет, не задан маршрутизатор). Километраж при этом
+	// занижен. Отдавать такое молча нельзя — цифра уходит в деньги.
+	Degraded bool
 }
 
 type Service struct {
@@ -64,8 +69,10 @@ func (s *Service) Resolve(ctx context.Context, points []geo.Point) (*Result, err
 		return nil, ErrTooFewPoints
 	}
 
+	st := pl.State()
 	return &Result{
-		Synthetic:       pl.State().Synthetic,
+		Synthetic:       st.Synthetic,
+		Degraded:        st.Degraded,
 		Points:          cleaned,
 		LengthMeters:    geo.TotalLength(cleaned),
 		BeforeLenMeters: beforeMeters,
