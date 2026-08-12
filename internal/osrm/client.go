@@ -20,6 +20,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -256,6 +257,14 @@ func (c *Client) once(ctx context.Context, path string) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// Без адреса. Go кладёт в `*url.Error` весь URL, а у нас в нём сотни
+		// координат батча: одна строка лога уезжала на килобайты, забивала
+		// собой всё вокруг и выносила наружу сам трек. Причина («connection
+		// refused», «timeout») сохраняется — она и нужна.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return nil, fmt.Errorf("osrm: request: %w", ue.Err)
+		}
 		return nil, fmt.Errorf("osrm: request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()

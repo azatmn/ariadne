@@ -714,3 +714,85 @@ func TestMinValid(t *testing.T) {
 		assert.Equal(t, c.want, got, c.why)
 	}
 }
+
+// Счёт точек без снэпа обязан сходиться: «N из M», где N ≤ M.
+//
+// Раньше складывались размеры провалившихся кусков, а куски при делении
+// ПЕРЕКРЫВАЮТСЯ (`[lo, mid+1]` и `[mid, hi]` делят точку mid). На живом
+// прогоне это дало «не удалось получить снэп для 4736 точек из 2369» — число,
+// которое само себя опровергает и обесценивает всю строку.
+func TestSnap_FailedCountNeverExceedsTotal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"NoSegment"}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0; cfg.BatchPoints = 4 })
+	pts := track(20)
+
+	_, ok, warns := c.Snap(context.Background(), pts)
+
+	answered := 0
+	for _, o := range ok {
+		if o {
+			answered++
+		}
+	}
+	require.Zero(t, answered, "сервер отказал на всё — отвечено не должно быть ни про одну точку")
+	require.Len(t, warns, 1)
+	assert.Contains(t, warns[0], "для 20 точек из 20",
+		"счёт обязан сходиться, а не складывать перекрывающиеся куски: %q", warns[0])
+}
+
+// Часть точек ответилась — в счёте ровно те, что нет.
+func TestSnap_FailedCountMatchesUnanswered(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if n == 1 { // первый батч валим целиком, остальные отвечают
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"NoSegment"}`))
+			return
+		}
+		_, _ = w.Write([]byte(waypointsJSON(countCoords(r.URL.Path), 5)))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0; cfg.BatchPoints = 4 })
+	pts := track(12)
+
+	_, ok, warns := c.Snap(context.Background(), pts)
+
+	missing := 0
+	for _, o := range ok {
+		if !o {
+			missing++
+		}
+	}
+	if missing == 0 {
+		require.Empty(t, warns, "все точки отвечены — жаловаться не на что")
+		return
+	}
+	require.Len(t, warns, 1)
+	assert.Contains(t, warns[0], fmt.Sprintf("для %d точек из %d", missing, len(pts)),
+		"в жалобе обязано стоять реальное число неотвеченных: %q", warns[0])
+}
+
+// В тексте ошибки не должно быть километрового адреса.
+//
+// Живой прогон: одна строка лога уехала на несколько килобайт, потому что в
+// неё попал URL со всеми координатами батча. Такой лог не читается, занимает
+// место и вываливает наружу сам трек.
+func TestSnap_ErrorTextStaysShort(t *testing.T) {
+	// Сервер закрыт: соединение не устанавливается, и Go кладёт в текст ошибки
+	// ВЕСЬ адрес запроса — то есть все координаты батча.
+	srv := httptest.NewServer(http.NotFoundHandler())
+	c := newClient(t, srv, func(cfg *Config) { cfg.Retries = 0; cfg.BatchPoints = 200 })
+	srv.Close()
+	_, _, warns := c.Snap(context.Background(), track(200))
+
+	require.Len(t, warns, 1)
+	assert.Less(t, len(warns[0]), 300,
+		"жалоба на %d символов — в неё уехал адрес целиком: %q", len(warns[0]), warns[0])
+}

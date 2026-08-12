@@ -120,11 +120,22 @@ func (c *Client) Snap(ctx context.Context, pts []geo.Point) (snap []float64, ok 
 				next = append(next,
 					span{lo: sp.lo, hi: mid + 1, depth: sp.depth + 1},
 					span{lo: mid, hi: sp.hi, depth: sp.depth + 1})
-			} else {
-				failed += sp.hi - sp.lo
 			}
 		}
 		queue = next
+	}
+
+	// Считаем по факту: сколько точек осталось без ответа. Складывать размеры
+	// провалившихся кусков нельзя — при дроблении половины ПЕРЕКРЫВАЮТСЯ
+	// (`[lo, mid+1]` и `[mid, hi]` делят точку mid), и одни и те же точки
+	// попадают в сумму по нескольку раз. На живом прогоне это дало «не удалось
+	// получить снэп для 4736 точек из 2369» — число, которое само себя
+	// опровергает и обесценивает всю строку.
+	failed = 0
+	for _, o := range ok {
+		if !o {
+			failed++
+		}
 	}
 
 	if failed > 0 {
