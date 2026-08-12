@@ -14,6 +14,7 @@ import (
 
 	"ariadne/internal/codec"
 	"ariadne/internal/geo"
+	"ariadne/internal/logger"
 	"ariadne/internal/service"
 	"ariadne/internal/taskstore"
 )
@@ -247,62 +248,75 @@ var notifyTimeout = 30 * time.Second
 // паники в чтении/записи/коллбэке.
 func (p *Pool) process(claim taskstore.Claim) {
 	taskKey := claim.TaskKey
+
+	// Логгер с номером задачи — и в свои записи, и В КОНТЕКСТ обработки.
+	//
+	// Второе важнее. Конвейер про воркера не знает и берёт логгер из контекста
+	// (`logger.FromContext`); контексты здесь создаются из `Background`, и без
+	// этой строки внутри пусто — записи уходили в стандартный поток: другим
+	// форматом, в другой файл и без номера задачи. Разобрать по такому логу
+	// ночной инцидент нельзя: видно «стадия отработала», но не видно, о каком
+	// маршруте речь.
+	log := p.logger.With("taskKey", taskKey)
+
 	defer func() {
 		if r := recover(); r != nil {
-			p.logger.Error("panic in worker", "taskKey", taskKey, "panic", r, "stack", string(debug.Stack()))
+			log.Error("panic in worker", "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 
-	getCtx, getCancel := context.WithTimeout(context.Background(), ioTimeout)
+	base := logger.ToContext(context.Background(), log)
+
+	getCtx, getCancel := context.WithTimeout(base, ioTimeout)
 	card, err := p.store.Get(getCtx, taskKey)
 	getCancel()
 	if err != nil {
 		// Без расписки: карточку не прочитали, работа не сделана — пусть
 		// задачу вернут в работу, а не потеряют.
-		p.logger.Error("get task failed", "taskKey", taskKey, "error", err)
+		log.Error("get task failed", "error", err)
 		return
 	}
 
 	// runFill (не fill напрямую): паника внутри не проскочит мимо procCancel и
 	// мимо пометки failed — вернётся ошибкой, задача завершится штатно.
-	procCtx, procCancel := context.WithTimeout(context.Background(), p.timeout)
+	procCtx, procCancel := context.WithTimeout(base, p.timeout)
 	fillErr := p.runFill(procCtx, card)
 	procCancel()
 
 	if fillErr != nil {
 		card.Status = taskstore.StatusFailed
 		card.Error = fillErr.Error()
-		p.logger.Warn("task failed", "taskKey", taskKey, "error", fillErr)
+		log.Warn("task failed", "error", fillErr)
 	} else {
 		card.Status = taskstore.StatusDone
 	}
 
-	writeCtx, writeCancel := context.WithTimeout(context.Background(), ioTimeout)
+	writeCtx, writeCancel := context.WithTimeout(base, ioTimeout)
 	defer writeCancel()
 	if err := p.store.Update(writeCtx, card); err != nil {
 		// Расписки НЕ даём: задача остаётся числиться выданной, и её вернут в
 		// работу. Раньше номерок здесь был уже потерян навсегда, а карточка
 		// висела в pending до конца TTL.
-		p.logger.Error("update task failed", "taskKey", taskKey, "error", err)
+		log.Error("update task failed", "error", err)
 		return // результат не сохранён — Laravel не уведомляем
 	}
 
 	// Результат записан — только теперь расписываемся. Ошибка расписки не
 	// страшна: задачу выдадут снова, она пересчитается и перезапишет тот же
 	// результат.
-	ackCtx, ackCancel := context.WithTimeout(context.Background(), ioTimeout)
+	ackCtx, ackCancel := context.WithTimeout(base, ioTimeout)
 	defer ackCancel()
 	if err := p.store.Ack(ackCtx, claim); err != nil {
-		p.logger.Error("ack task failed", "taskKey", taskKey, "error", err)
+		log.Error("ack task failed", "error", err)
 	}
 
 	// Уведомляем Laravel. Свой ctx из Background — коллбэк добиваем независимо
 	// от shutdown. Ошибку только логируем: задача уже сохранена, статус заберут
 	// и опросом GET /v1/tasks/{taskKey}.
-	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), notifyTimeout)
+	notifyCtx, notifyCancel := context.WithTimeout(base, notifyTimeout)
 	defer notifyCancel()
 	if err := p.notify.Notify(notifyCtx, card.Key, string(card.Status)); err != nil {
-		p.logger.Warn("callback failed", "taskKey", card.Key, "status", card.Status, "error", err)
+		log.Warn("callback failed", "status", card.Status, "error", err)
 	}
 }
 

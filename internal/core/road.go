@@ -131,7 +131,8 @@ func CheckByRoad(ctx context.Context, road RoadClient, pts []geo.Point, chain []
 		return 0
 	}
 
-	dist, ok, _ := road.PairDistance(ctx, pairs)
+	dist, ok, warns := road.PairDistance(ctx, pairs)
+	logRoadWarnings(ctx, "road", warns)
 
 	added := 0
 	for k := range pairs {

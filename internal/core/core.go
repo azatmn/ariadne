@@ -677,7 +677,8 @@ func (c *Core) snapOf(ctx context.Context, pts []geo.Point) ([]float64, []bool) 
 	if c.Snap == nil {
 		return snaps, ok
 	}
-	got, gotOK, _ := c.Snap.Snap(ctx, pts)
+	got, gotOK, warns := c.Snap.Snap(ctx, pts)
+	logRoadWarnings(ctx, "snap", warns)
 	copy(snaps, got)
 	copy(ok, gotOK)
 	return snaps, ok

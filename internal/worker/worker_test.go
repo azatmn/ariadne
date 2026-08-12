@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"ariadne/internal/codec"
 	"ariadne/internal/config"
 	"ariadne/internal/geo"
+	"ariadne/internal/logger"
 	"ariadne/internal/service"
 	"ariadne/internal/taskstore"
 )
@@ -637,4 +639,39 @@ func TestPool_MarksPoisonousTaskFailed(t *testing.T) {
 	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shCancel()
 	pool.Shutdown(shCtx)
+}
+
+// loggerSpy — резолвер, который пишет в логгер ИЗ КОНТЕКСТА обработки.
+//
+// Так делает конвейер: он не знает про воркера и берёт логгер оттуда. Если
+// воркер логгер не положил, запись уйдёт в стандартный поток — другим форматом,
+// в другой файл и без номера задачи.
+type loggerSpy struct{}
+
+func (loggerSpy) Resolve(ctx context.Context, points []geo.Point) (*service.Result, error) {
+	logger.FromContext(ctx).Warn("что-то пошло не так внутри обработки")
+	return &service.Result{Points: points, LengthMeters: 42}, nil
+}
+
+// Записи обработки обязаны идти через настроенный логгер и нести номер задачи.
+//
+// Без этого разобрать ночной инцидент нельзя: в логе видно «что-то пошло не
+// так», но не видно, с какой задачей. А когда задач четыре в секунду, это
+// то же самое, что не видеть ничего.
+func TestProcess_PutsTaskLoggerIntoContext(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	store := newTestStore(t)
+	pool := New(store, loggerSpy{}, noopNotifier{}, log, 1, 10*time.Second,
+		codec.Limits{DecompressedBytes: 20 << 20, Points: 50_000})
+	saveTask(t, store, "traceable", validInput(t))
+
+	pool.process(taskstore.Claim{TaskKey: "traceable", ID: "1-0"})
+
+	out := buf.String()
+	require.Contains(t, out, "что-то пошло не так внутри обработки",
+		"запись из обработки обязана попасть в настроенный логгер, а не в стандартный поток")
+	assert.Contains(t, out, `"taskKey":"traceable"`,
+		"без номера задачи запись бесполезна: непонятно, о каком маршруте речь")
 }

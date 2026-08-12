@@ -101,7 +101,8 @@ func CheckLoops(ctx context.Context, road RoadClient, pts []geo.Point, chain []i
 		return 0
 	}
 
-	dist, ok, _ := road.PairDistance(ctx, pairs)
+	dist, ok, warns := road.PairDistance(ctx, pairs)
+	logRoadWarnings(ctx, "loops", warns)
 
 	found := 0
 	hot := false // режем ли сейчас: состояние гистерезиса
