@@ -34,13 +34,13 @@ type ResolveResponse struct {
 }
 
 type Handler struct {
-	svc                  *service.Service
-	maxDecompressedBytes int64
-	resolveTimeout       time.Duration
+	svc            *service.Service
+	limits         codec.Limits
+	resolveTimeout time.Duration
 }
 
-func NewHandler(svc *service.Service, maxDecompressedBytes int64, resolveTimeout time.Duration) *Handler {
-	return &Handler{svc: svc, maxDecompressedBytes: maxDecompressedBytes, resolveTimeout: resolveTimeout}
+func NewHandler(svc *service.Service, limits codec.Limits, resolveTimeout time.Duration) *Handler {
+	return &Handler{svc: svc, limits: limits, resolveTimeout: resolveTimeout}
 }
 
 // HandleResolve синхронно прогоняет маршрут через pipeline и отдаёт результат.
@@ -57,10 +57,17 @@ func (h *Handler) HandleResolve(w http.ResponseWriter, r *http.Request) error {
 		return &api.AppError{Code: api.CodeInvalidRequest, Message: "routeCompressed is required"}
 	}
 
-	points, err := codec.Decode(req.RouteCompressed, h.maxDecompressedBytes)
+	points, err := codec.Decode(req.RouteCompressed, h.limits)
 	if err != nil {
 		if errors.Is(err, codec.ErrDecompressedTooLarge) {
 			return &api.AppError{Code: api.CodeRouteTooLarge, Message: "decompressed data too large", Err: err}
+		}
+		// «Точек больше потолка» отдаём тем же кодом, что и `service.ErrTooManyPoints`.
+		// Отказ переехал раньше — в разбор, где он останавливает чтение и не даёт
+		// выделить память под весь вход, — но для клиента это то же самое событие,
+		// и код ответа менять нельзя: он часть публичного контракта.
+		if errors.Is(err, codec.ErrTooManyPoints) {
+			return &api.AppError{Code: api.CodeRouteTooLarge, Message: "too many points", Err: err}
 		}
 		return &api.AppError{Code: api.CodeInvalidRouteFormat, Message: "cannot decode routeCompressed", Err: err}
 	}

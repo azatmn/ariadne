@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"ariadne/internal/api"
+	"ariadne/internal/codec"
 	"ariadne/internal/config"
 	"ariadne/internal/service"
 )
@@ -21,7 +22,7 @@ import (
 // debugRouter собирает роутер как в cmd/debugserver (та же обвязка middleware).
 func debugRouter(cfg *config.Config) http.Handler {
 	logger := slog.Default()
-	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints}, cfg.ResolveTimeout)
 
 	r := chi.NewRouter()
 	r.Use(api.Recover(logger))

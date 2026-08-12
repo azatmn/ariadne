@@ -38,13 +38,13 @@ func testConfig() *config.Config {
 func testHandler() http.HandlerFunc {
 	logger := slog.Default()
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints}, cfg.ResolveTimeout)
 	return api.ErrorMiddleware(logger)(h.HandleResolve)
 }
 
 func testHandlerWithConfig(cfg *config.Config) http.HandlerFunc {
 	logger := slog.Default()
-	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints}, cfg.ResolveTimeout)
 	return api.ErrorMiddleware(logger)(h.HandleResolve)
 }
 
@@ -194,7 +194,7 @@ func TestHandlerNoWarningsWhenClean(t *testing.T) {
 	// срабатывают на вырожденности (каждый кусок формально огрызок), и тест
 	// мерил бы не то.
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg, stubRouter{}), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, stubRouter{}), codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints}, cfg.ResolveTimeout)
 	handler := api.ErrorMiddleware(slog.Default())(h.HandleResolve)
 	body := `{"routeCompressed":"` + longRoute(t) + `"}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/routes/resolve-collisions", strings.NewReader(body))
@@ -246,7 +246,7 @@ func TestHandlerTooFewPointsAfterPipeline(t *testing.T) {
 func TestHandlerMaxBytesError(t *testing.T) {
 	logger := slog.Default()
 	cfg := testConfig()
-	h := NewHandler(service.New(cfg, nil), cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := NewHandler(service.New(cfg, nil), codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints}, cfg.ResolveTimeout)
 	handler := api.LimitBody(50)(api.ErrorMiddleware(logger)(h.HandleResolve))
 
 	bigBody := `{"routeCompressed":"` + strings.Repeat("x", 100) + `"}`

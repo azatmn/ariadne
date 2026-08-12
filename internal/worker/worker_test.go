@@ -117,7 +117,8 @@ func newPool(t *testing.T, store *taskstore.Store, r resolver, taskTimeout time.
 func newPoolN(t *testing.T, store *taskstore.Store, r resolver, n notifier, taskTimeout time.Duration) *Pool {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(store, r, n, logger, 1, taskTimeout, 20<<20)
+	return New(store, r, n, logger, 1, taskTimeout,
+		codec.Limits{DecompressedBytes: 20 << 20, Points: 50_000})
 }
 
 // validInput — корректный сжатый маршрут (несколько точек, переживут чистку).

@@ -32,27 +32,27 @@ type notifier interface {
 
 // Pool — пул воркеров.
 type Pool struct {
-	store                *taskstore.Store
-	svc                  resolver
-	notify               notifier
-	logger               *slog.Logger
-	workers              int
-	timeout              time.Duration // таймаут на обработку одной задачи
-	maxDecompressedBytes int64         // лимит распаковки для codec.Decode
+	store   *taskstore.Store
+	svc     resolver
+	notify  notifier
+	logger  *slog.Logger
+	workers int
+	timeout time.Duration // таймаут на обработку одной задачи
+	limits  codec.Limits  // потолки разбора: байты и число точек
 
 	wg sync.WaitGroup
 }
 
 // New собирает пул. Реально воркеры стартуют в Start.
-func New(store *taskstore.Store, svc resolver, notify notifier, logger *slog.Logger, workers int, timeout time.Duration, maxDecompressedBytes int64) *Pool {
+func New(store *taskstore.Store, svc resolver, notify notifier, logger *slog.Logger, workers int, timeout time.Duration, limits codec.Limits) *Pool {
 	return &Pool{
-		store:                store,
-		svc:                  svc,
-		notify:               notify,
-		logger:               logger,
-		workers:              workers,
-		timeout:              timeout,
-		maxDecompressedBytes: maxDecompressedBytes,
+		store:   store,
+		svc:     svc,
+		notify:  notify,
+		logger:  logger,
+		workers: workers,
+		timeout: timeout,
+		limits:  limits,
 	}
 }
 
@@ -201,7 +201,7 @@ func (p *Pool) runFill(ctx context.Context, card *taskstore.Task) (err error) {
 // fill чистит маршрут и заполняет поля результата прямо в card.
 // При ошибке возвращает её — process пометит задачу failed.
 func (p *Pool) fill(ctx context.Context, card *taskstore.Task) error {
-	points, err := codec.Decode(card.Input, p.maxDecompressedBytes)
+	points, err := codec.Decode(card.Input, p.limits)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}

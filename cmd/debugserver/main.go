@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"ariadne/internal/api"
+	"ariadne/internal/codec"
 	"ariadne/internal/config"
 	"ariadne/internal/debugapi"
 	"ariadne/internal/service"
@@ -32,7 +33,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
 	svc := service.New(cfg, service.NewRouter(cfg, logger))
-	h := debugapi.NewHandler(svc, cfg.MaxDecompressedBytes, cfg.ResolveTimeout)
+	h := debugapi.NewHandler(svc, codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints}, cfg.ResolveTimeout)
 
 	// Middleware переиспользуем из internal/api (Recover/RequestID/Logger/LimitBody).
 	r := chi.NewRouter()

@@ -14,7 +14,51 @@ import (
 	"ariadne/internal/geo"
 )
 
-var ErrDecompressedTooLarge = errors.New("codec: decompressed data too large")
+var (
+	ErrDecompressedTooLarge = errors.New("codec: decompressed data too large")
+
+	// ErrTooManyPoints — во входе больше точек, чем разрешено.
+	//
+	// Свой, а не `service.ErrTooManyPoints`: разбор не должен знать про сервис.
+	// Оба отказа означают для клиента одно и то же и обязаны отдаваться одним
+	// кодом ответа — см. места, где они разбираются.
+	ErrTooManyPoints = errors.New("codec: too many points")
+)
+
+// Limits — потолки разбора. Оба нужны и оба защищают от разного:
+// байты — от бомбы сжатия, точки — от дешёвых элементов вроде `{}`, которых
+// в двадцать мегабайт влезает семь миллионов.
+//
+// Структурой, а не двумя числами в списке аргументов: рядом стоящие `int64` и
+// `int` легко переставить местами, и компилятор такого не заметит — а сервис
+// начнёт принимать семь миллионов точек в двадцати байтах.
+type Limits struct {
+	DecompressedBytes int64 // потолок на распакованный JSON
+	Points            int   // потолок на число точек
+}
+
+// capReader читает не больше limit байт и объявляет об этом сам.
+//
+// `io.LimitReader` для этого не годится: он возвращает EOF, и разбор JSON
+// сообщил бы про «неожиданный конец данных» — то есть про испорченный вход
+// вместо превышенного лимита. Разница видна клиенту: в первом случае он чинит
+// свои данные, во втором шлёт трек по частям.
+type capReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		return 0, ErrDecompressedTooLarge
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
+}
 
 // wirePoint — формат точки на проводе (JSON от PHP backend).
 // PHP gzcompress() = zlib (заголовок 0x78), НЕ gzip.
@@ -28,7 +72,26 @@ type wirePos struct {
 	Y float64 `json:"y"` // latitude
 }
 
-func Decode(routeCompressed string, maxDecompressedBytes int64) ([]geo.Point, error) {
+// Decode разбирает сжатый маршрут в точки.
+//
+// Разбор ПОТОКОВЫЙ, и это не про скорость, а про память. Раньше сюда приходил
+// весь JSON целиком, `json.Unmarshal` строил из него срез, и только потом,
+// далеко отсюда — в `service.Resolve` — проверялось число точек. Байтовый лимит
+// такого не ловит: самый дешёвый элемент массива это три символа `{},`, и
+// двадцать мегабайт таких дают семь миллионов элементов. Замерено: запрос на
+// 27 КБ просил 1547 МБ при `mem_limit: 256m`, то есть один запрос убивал
+// контейнер.
+//
+// Теперь элементы читаются по одному, а счёт проверяется на каждом. Расход
+// ограничен `Limits.Points` независимо от того, что прислали.
+//
+// `Limits.Points` обязан быть положительным: ноль — это не «без ограничений»,
+// а испорченная настройка, и тихо снимать потолок нельзя.
+func Decode(routeCompressed string, lim Limits) ([]geo.Point, error) {
+	if lim.Points <= 0 {
+		return nil, fmt.Errorf("codec: Limits.Points must be positive, got %d", lim.Points)
+	}
+
 	compressed, err := base64.StdEncoding.DecodeString(routeCompressed)
 	if err != nil {
 		return nil, fmt.Errorf("codec: base64 decode: %w", err)
@@ -42,22 +105,30 @@ func Decode(routeCompressed string, maxDecompressedBytes int64) ([]geo.Point, er
 		_ = zr.Close()
 	}()
 
-	lr := io.LimitReader(zr, maxDecompressedBytes+1)
-	jsonData, err := io.ReadAll(lr)
+	dec := json.NewDecoder(&capReader{r: zr, left: lim.DecompressedBytes})
+
+	// Открывающая скобка. Отдельным шагом, чтобы «это вообще не массив»
+	// отличалось от «массив, но с мусором внутри».
+	tok, err := dec.Token()
 	if err != nil {
-		return nil, fmt.Errorf("codec: zlib read: %w", err)
+		return nil, decodeErr(err)
 	}
-	if int64(len(jsonData)) > maxDecompressedBytes {
-		return nil, ErrDecompressedTooLarge
-	}
-
-	var wire []wirePoint
-	if err = json.Unmarshal(jsonData, &wire); err != nil {
-		return nil, fmt.Errorf("codec: json unmarshal: %w", err)
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return nil, fmt.Errorf("codec: ожидался массив точек, получено %v", tok)
 	}
 
-	points := make([]geo.Point, len(wire))
-	for i, w := range wire {
+	var points []geo.Point
+	for dec.More() {
+		if len(points) >= lim.Points {
+			return nil, fmt.Errorf("%w: больше %d", ErrTooManyPoints, lim.Points)
+		}
+
+		var w wirePoint
+		if err := dec.Decode(&w); err != nil {
+			return nil, decodeErr(err)
+		}
+
+		i := len(points)
 		t, err := time.Parse(time.RFC3339, w.T)
 		if err != nil {
 			return nil, fmt.Errorf("codec: parse time %q at index %d: %w", w.T, i, err)
@@ -70,14 +141,28 @@ func Decode(routeCompressed string, maxDecompressedBytes int64) ([]geo.Point, er
 			return nil, fmt.Errorf("codec: coordinates out of range at index %d: lon=%f lat=%f", i, lon, lat)
 		}
 
-		points[i] = geo.Point{
-			Time: t,
-			Lon:  lon,
-			Lat:  lat,
-		}
+		points = append(points, geo.Point{Time: t, Lon: lon, Lat: lat})
+	}
+
+	// Закрывающая скобка: без неё «[{...}» прошло бы за годный вход.
+	if _, err := dec.Token(); err != nil {
+		return nil, decodeErr(err)
 	}
 
 	return points, nil
+}
+
+// decodeErr сохраняет распознаваемые причины и заворачивает остальное.
+//
+// Разбор JSON читает через `capReader`, и превышение лимита приходит сюда как
+// обычная ошибка чтения. Завернуть её в «json unmarshal» значило бы сказать
+// клиенту «у вас битые данные» вместо «трек слишком большой» — а это разные
+// действия с его стороны.
+func decodeErr(err error) error {
+	if errors.Is(err, ErrDecompressedTooLarge) {
+		return ErrDecompressedTooLarge
+	}
+	return fmt.Errorf("codec: json unmarshal: %w", err)
 }
 
 func Encode(points []geo.Point) (string, error) {

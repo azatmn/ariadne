@@ -15,6 +15,7 @@ import (
 
 	"ariadne/internal/api"
 	"ariadne/internal/callback"
+	"ariadne/internal/codec"
 	"ariadne/internal/config"
 	"ariadne/internal/grpcapi"
 	"ariadne/internal/service"
@@ -70,7 +71,7 @@ func main() {
 	// Воркер-пул: N горутин разбирают очередь задач из Redis и пишут результат
 	// обратно в карточку. workerCtx отменяем отдельно — при выключении сначала
 	// гасим воркеров, потом ждём, пока допишут текущие задачи.
-	pool := worker.New(store, svc, notifier, logger, cfg.WorkerCount, cfg.ResolveTimeout, cfg.MaxDecompressedBytes)
+	pool := worker.New(store, svc, notifier, logger, cfg.WorkerCount, cfg.ResolveTimeout, codec.Limits{DecompressedBytes: cfg.MaxDecompressedBytes, Points: cfg.MaxPoints})
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 	pool.Start(workerCtx)
 	logger.Info("worker pool started", "workers", cfg.WorkerCount)
