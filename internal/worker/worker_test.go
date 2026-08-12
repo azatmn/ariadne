@@ -767,3 +767,49 @@ func TestPool_DoesNotFailAlreadyFinishedTask(t *testing.T) {
 	assert.Nil(t, st.saved(),
 		"готовую карточку трогать нельзя: работа сделана, ответ лежит")
 }
+
+// halfBrokenReclaim отдаёт ядовитые номерки ВМЕСТЕ с ошибкой — так `Reclaim`
+// и делает, если споткнётся на следующей записи: часть работы уже сделана,
+// запись снята со списка выданных.
+type halfBrokenReclaim struct {
+	*reclaimSpy
+	once bool
+}
+
+func (h *halfBrokenReclaim) Reclaim(context.Context, time.Duration, int) ([]string, []string, error) {
+	if h.once {
+		return nil, nil, nil
+	}
+	h.once = true
+	return nil, []string{"poison-half"}, errors.New("redis moment")
+}
+
+// Ошибка посреди уборки не должна съедать уже разобранные номерки.
+//
+// `Reclaim` снимает ядовитую запись со списка выданных СРАЗУ и возвращает
+// номерок вызывающему. Если дальше он споткнётся и вернёт ошибку, а
+// вызывающий на ошибке просто выйдет — карточка навсегда останется `pending`:
+// из очереди её уже сняли, а упавшей не пометили. Это ровно тот дефект, ради
+// которого всю очередь и переписывали, только на новом месте.
+func TestPool_ReclaimErrorDoesNotDropPoisoned(t *testing.T) {
+	old := reclaimInterval
+	reclaimInterval = 20 * time.Millisecond
+	t.Cleanup(func() { reclaimInterval = old })
+
+	st := &halfBrokenReclaim{reclaimSpy: newReclaimSpy()}
+	pool := newPool(t, st, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+
+	require.Eventually(t, func() bool {
+		_, _, failed := st.snapshot()
+		return len(failed) > 0
+	}, 2*time.Second, 10*time.Millisecond,
+		"номерок пришёл вместе с ошибкой — его всё равно надо довести до конца")
+
+	cancel()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+}

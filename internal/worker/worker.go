@@ -123,10 +123,17 @@ func (p *Pool) reclaimOnce(ctx context.Context, minIdle time.Duration) {
 	opCtx, cancel := context.WithTimeout(context.Background(), ioTimeout)
 	defer cancel()
 
+	// Разбираем ВСЁ, что вернулось, даже вместе с ошибкой.
+	//
+	// `Reclaim` снимает ядовитую запись со списка выданных сразу и отдаёт
+	// номерок нам; если дальше он споткнётся на следующей записи, то вернёт и
+	// уже разобранное, и ошибку. Выйти здесь по ошибке значило бы бросить
+	// такую карточку в `pending` навсегда: из очереди её сняли, а упавшей не
+	// пометили. Ровно тот дефект, ради которого очередь и переписывали.
 	requeued, poisoned, err := p.store.Reclaim(opCtx, minIdle, maxAttempts)
 	if err != nil {
-		p.logger.Error("reclaim failed", "error", err)
-		return
+		p.logger.Error("reclaim failed", "error", err,
+			"requeued", len(requeued), "poisoned", len(poisoned))
 	}
 	if len(requeued) > 0 {
 		p.logger.Warn("abandoned tasks returned to queue",

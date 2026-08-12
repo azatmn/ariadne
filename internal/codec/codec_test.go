@@ -305,3 +305,27 @@ func TestDecodeRequiresPositiveMaxPoints(t *testing.T) {
 		require.Error(t, err, "maxPoints=%d обязан быть отказом", max)
 	}
 }
+
+// Мусор после закрывающей скобки — это испорченный вход, а не годный.
+//
+// Регрессия потокового разбора: `json.Unmarshal` читал документ целиком и на
+// хвост ругался, а потоковый читает до `]` и уходит, не глядя дальше.
+// Пропущенный хвост означает, что мы приняли за маршрут что-то, чего клиент не
+// посылал: склеенные ответы, обрезанную дозапись, чужой кусок в теле.
+func TestDecodeRejectsTrailingGarbage(t *testing.T) {
+	good := `[{"t":"2026-01-01T00:00:00Z","pos":{"x":37.0,"y":55.0}}]`
+	for _, tail := range []string{`{"more":1}`, `]`, `garbage`, `[{"t":"2026-01-01T00:00:01Z","pos":{"x":37.1,"y":55.1}}]`} {
+		_, err := Decode(zip(t, good+tail), Limits{DecompressedBytes: 20 << 20, Points: testMaxPoints})
+		require.Error(t, err, "хвост %q обязан быть отказом", tail)
+	}
+}
+
+// А перевод строки в конце — по-прежнему годный вход.
+func TestDecodeAllowsTrailingWhitespace(t *testing.T) {
+	good := `[{"t":"2026-01-01T00:00:00Z","pos":{"x":37.0,"y":55.0}}]`
+	for _, tail := range []string{"", "\n", "  \n\t"} {
+		pts, err := Decode(zip(t, good+tail), Limits{DecompressedBytes: 20 << 20, Points: testMaxPoints})
+		require.NoError(t, err, "хвост %q — это пробелы, а не мусор", tail)
+		assert.Len(t, pts, 1)
+	}
+}
