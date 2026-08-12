@@ -689,3 +689,45 @@ func TestFill_NotDegradedOnCleanRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, st.Fill.Degraded)
 }
+
+// panicRouter роняет панику на каждый вопрос о дороге.
+type panicRouter struct{}
+
+func (panicRouter) RouteGeometry(context.Context, geo.Point, geo.Point) (*osrm.Route, bool) {
+	panic("boom in route")
+}
+
+// Паника во ВСЕХ горутинах-потребителях не должна вешать стадию.
+//
+// Регрессия от собственной правки `e26754d`: recover добавили внутрь горутины,
+// и после паники она выходит из `for k := range jobs`. А отправитель шлёт в
+// канал без `select` на отмену — принять некому, и стадия висит до конца жизни
+// процесса. Раньше та же паника роняла процесс: громко, заметно и лечилось
+// перезапуском. Стало тихо и навсегда: воркер занят, задача не подтверждается,
+// уборщик отдаёт её следующему — и так, пока пул не кончится, а сервис при
+// этом продолжает отвечать «жив».
+func TestFill_PanicInEveryWorkerDoesNotHang(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	// Дыр больше, чем работников: отправитель обязан упереться в канал.
+	pts := make([]geo.Point, 0, 40)
+	for i := range 20 {
+		pts = append(pts,
+			geo.Point{Time: t0.Add(time.Duration(i) * 10 * time.Minute), Lon: 37.60 + float64(i)*0.5, Lat: 55.75},
+			geo.Point{Time: t0.Add(time.Duration(i)*10*time.Minute + 5*time.Minute), Lon: 37.63 + float64(i)*0.5, Lat: 55.75})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _ = FillGaps{Routes: panicRouter{}, State: &RunState{}}.Apply(ctx, pts)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("стадия зависла: отправитель ждёт в канале, а принимать некому")
+	}
+}
