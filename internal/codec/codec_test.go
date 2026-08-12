@@ -275,6 +275,27 @@ func TestDecodeAllowsExactlyMaxPoints(t *testing.T) {
 	assert.Len(t, pts, n)
 }
 
+// Ровно на одну точку сверх потолка — уже отказ.
+//
+// Проверка не про удобство, а про сам порог: без неё замена `>=` на `>`
+// проходит мимо всех тестов, и сервис начинает принимать на точку больше
+// объявленного. Ошибка мелкая, но именно так пороги и уезжают.
+func TestDecodeRejectsOneOverMaxPoints(t *testing.T) {
+	const n = 100
+	var b strings.Builder
+	b.WriteByte('[')
+	for i := range n + 1 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"t":"2026-01-01T00:00:%02dZ","pos":{"x":37.0,"y":55.0}}`, i%60)
+	}
+	b.WriteByte(']')
+
+	_, err := Decode(zip(t, b.String()), Limits{DecompressedBytes: 20 << 20, Points: n})
+	require.ErrorIs(t, err, ErrTooManyPoints, "%d точек при потолке %d — это отказ", n+1, n)
+}
+
 // Потолок обязан быть задан. Ноль или отрицательное — это не «без ограничений»,
 // а испорченная настройка: тихо снять потолок значит вернуть ту самую бомбу.
 func TestDecodeRequiresPositiveMaxPoints(t *testing.T) {
