@@ -103,7 +103,7 @@ func (p *Pool) reclaimer(ctx context.Context) {
 	// увидеть его можно только в коде. Выросли маршруты, подняли таймаут —
 	// в логе сразу видно, каким стал срок.
 	p.logger.Info("reclaimer started",
-		"everyd", reclaimInterval, "abandonedAfter", minIdle, "maxAttempts", maxAttempts)
+		"every", reclaimInterval, "abandonedAfter", minIdle, "maxAttempts", maxAttempts)
 
 	t := time.NewTicker(reclaimInterval)
 	defer t.Stop()

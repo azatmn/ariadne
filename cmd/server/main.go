@@ -144,41 +144,61 @@ func main() {
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), pool.DrainBudget())
 	defer cancelDrain()
 
-	// Гасим воркеров: перестают забирать новые задачи из очереди.
-	// pool.Shutdown ниже дождётся, пока допишут уже взятые.
-	cancelWorkers()
+	gracefulStop(
+		// 1. Перестаём ПРИНИМАТЬ. HTTP и gRPC гасим параллельно — они друг
+		// друга не ждут.
+		func() {
+			var wg sync.WaitGroup
+			wg.Add(2)
 
-	var wg sync.WaitGroup
-	wg.Add(3)
+			go func() {
+				defer wg.Done()
+				done := make(chan struct{})
+				go func() { grpcSrv.GracefulStop(); close(done) }()
+				select {
+				case <-done:
+					logger.Info("grpc server stopped gracefully")
+				case <-ctx.Done():
+					logger.Warn("grpc graceful stop timed out, forcing")
+					grpcSrv.Stop()
+				}
+			}()
 
-	go func() {
-		defer wg.Done()
-		pool.Shutdown(drainCtx)
-		logger.Info("worker pool stopped")
-	}()
+			go func() {
+				defer wg.Done()
+				if err := httpSrv.Shutdown(ctx); err != nil {
+					logger.Error("http shutdown error", "error", err)
+				} else {
+					logger.Info("http server stopped gracefully")
+				}
+			}()
 
-	go func() {
-		defer wg.Done()
-		done := make(chan struct{})
-		go func() { grpcSrv.GracefulStop(); close(done) }()
-		select {
-		case <-done:
-			logger.Info("grpc server stopped gracefully")
-		case <-ctx.Done():
-			logger.Warn("grpc graceful stop timed out, forcing")
-			grpcSrv.Stop()
-		}
-	}()
+			wg.Wait()
+		},
 
-	go func() {
-		defer wg.Done()
-		if err := httpSrv.Shutdown(ctx); err != nil {
-			logger.Error("http shutdown error", "error", err)
-		} else {
-			logger.Info("http server stopped gracefully")
-		}
-	}()
+		// 2. И только теперь дорабатываем взятое.
+		func() {
+			cancelWorkers()
+			pool.Shutdown(drainCtx)
+			logger.Info("worker pool stopped")
+		},
+	)
 
-	wg.Wait()
 	logger.Info("servers stopped")
+}
+
+// gracefulStop останавливает сервис в единственно верном порядке: сначала
+// перестаём ПРИНИМАТЬ задачи, потом дорабатываем уже взятые.
+//
+// Раньше было наоборот: воркеров гасили первыми, а HTTP с gRPC ещё несколько
+// мгновений принимали. Задача, попавшая в это окно, получала ответ «принято» и
+// номерок — а разбирать её было уже некому. Клиент опрашивал её впустую до
+// следующего запуска сервиса.
+//
+// Отдельной функцией ради одного: порядок здесь — это и есть содержание, и он
+// закреплён тестом. Внутри одного длинного main такую перестановку не заметит
+// никто, включая автора правки.
+func gracefulStop(stopAccepting, drainWorkers func()) {
+	stopAccepting()
+	drainWorkers()
 }
