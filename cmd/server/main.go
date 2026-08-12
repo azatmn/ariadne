@@ -51,6 +51,14 @@ func main() {
 		logger.Error("redis unavailable", "addr", cfg.RedisAddr, "error", err)
 		os.Exit(1)
 	}
+	// Очередь — поток с группой потребителей; без группы читать нечем. Создаём
+	// на старте и падаем, если не вышло: сервис, который принимает задачи и не
+	// может их раздать, хуже упавшего — снаружи он выглядит рабочим.
+	if err := store.EnsureQueue(pingCtx); err != nil {
+		pingCancel()
+		logger.Error("task queue init failed", "error", err)
+		os.Exit(1)
+	}
 	pingCancel()
 	defer func() {
 		if err := store.Close(); err != nil {

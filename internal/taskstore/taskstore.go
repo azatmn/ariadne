@@ -15,6 +15,11 @@ import (
 type Store struct {
 	rdb *redis.Client
 	ttl time.Duration
+
+	// consumer — имя этого процесса в группе потребителей очереди.
+	// Постоянно на всё время жизни процесса: по нему Redis ведёт список
+	// выданных, но не подтверждённых задач.
+	consumer string
 }
 
 // New создаёт Store. Само соединение ленивое: реальную связь устанавливает
@@ -26,7 +31,8 @@ func New(addr string, db int, password string, ttl time.Duration) *Store {
 			Password: password,
 			DB:       db,
 		}),
-		ttl: ttl,
+		ttl:      ttl,
+		consumer: consumerName(),
 	}
 }
 

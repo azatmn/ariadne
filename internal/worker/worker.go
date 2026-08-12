@@ -99,7 +99,7 @@ func (p *Pool) worker(ctx context.Context) {
 			return
 		}
 
-		taskKey, err := p.store.Dequeue(ctx)
+		claim, err := p.store.Dequeue(ctx)
 		if errors.Is(err, taskstore.ErrNoTask) {
 			continue // очередь пустовала — новый круг (и проверка ctx сверху)
 		}
@@ -111,7 +111,7 @@ func (p *Pool) worker(ctx context.Context) {
 			continue
 		}
 
-		p.process(taskKey)
+		p.process(claim)
 	}
 }
 
@@ -136,7 +136,8 @@ var notifyTimeout = 30 * time.Second
 // доделать. Паника в обработке ловится в runFill и превращается в failed (задача
 // не зависает в pending); внешний recover — последняя страховка воркера на случай
 // паники в чтении/записи/коллбэке.
-func (p *Pool) process(taskKey string) {
+func (p *Pool) process(claim taskstore.Claim) {
+	taskKey := claim.TaskKey
 	defer func() {
 		if r := recover(); r != nil {
 			p.logger.Error("panic in worker", "taskKey", taskKey, "panic", r, "stack", string(debug.Stack()))
@@ -147,6 +148,8 @@ func (p *Pool) process(taskKey string) {
 	card, err := p.store.Get(getCtx, taskKey)
 	getCancel()
 	if err != nil {
+		// Без расписки: карточку не прочитали, работа не сделана — пусть
+		// задачу вернут в работу, а не потеряют.
 		p.logger.Error("get task failed", "taskKey", taskKey, "error", err)
 		return
 	}
@@ -168,8 +171,20 @@ func (p *Pool) process(taskKey string) {
 	writeCtx, writeCancel := context.WithTimeout(context.Background(), ioTimeout)
 	defer writeCancel()
 	if err := p.store.Update(writeCtx, card); err != nil {
+		// Расписки НЕ даём: задача остаётся числиться выданной, и её вернут в
+		// работу. Раньше номерок здесь был уже потерян навсегда, а карточка
+		// висела в pending до конца TTL.
 		p.logger.Error("update task failed", "taskKey", taskKey, "error", err)
 		return // результат не сохранён — Laravel не уведомляем
+	}
+
+	// Результат записан — только теперь расписываемся. Ошибка расписки не
+	// страшна: задачу выдадут снова, она пересчитается и перезапишет тот же
+	// результат.
+	ackCtx, ackCancel := context.WithTimeout(context.Background(), ioTimeout)
+	defer ackCancel()
+	if err := p.store.Ack(ackCtx, claim); err != nil {
+		p.logger.Error("ack task failed", "taskKey", taskKey, "error", err)
 	}
 
 	// Уведомляем Laravel. Свой ctx из Background — коллбэк добиваем независимо

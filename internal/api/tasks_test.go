@@ -20,7 +20,7 @@ import (
 
 // --- хелперы ---
 
-const queueKey = "tasks:queue" // должен совпадать с taskstore/queue.go
+const queueKey = "tasks:stream" // должен совпадать с taskstore/queue.go
 
 // taskEnv поднимает miniredis, стор на него и роутер с тремя async-ручками.
 // Возвращает и сырой miniredis, чтобы проверять, что реально записалось в Redis
@@ -32,6 +32,8 @@ func taskEnv(t *testing.T) (http.Handler, *taskstore.Store, *miniredis.Miniredis
 	t.Cleanup(mr.Close)
 
 	store := taskstore.New(mr.Addr(), 0, "", time.Hour)
+	// Как в бою: очередь создаётся на старте сервиса, до первой задачи.
+	require.NoError(t, store.EnsureQueue(context.Background()))
 	h := NewHandler(store)
 
 	errMw := ErrorMiddleware(testLogger())
@@ -90,8 +92,7 @@ func TestSubmit_Valid(t *testing.T) {
 	assert.Empty(t, card.Result)
 
 	// ключ реально в очереди
-	list, err := mr.List(queueKey)
-	require.NoError(t, err)
+	list := queuedKeys(t, mr)
 	assert.Contains(t, list, resp.TaskKey)
 }
 
@@ -103,7 +104,7 @@ func TestSubmit_EmptyRoute(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Equal(t, CodeInvalidRequest, decodeErr(t, rec).Error.Code)
-	assert.Empty(t, mr.Keys(), "при отказе в Redis не должно появиться ключей")
+	assert.Empty(t, taskKeys(mr), "при отказе в Redis не должно появиться ключей задач")
 }
 
 // поле вообще отсутствует ({}) → тоже 400, ничего не записано.
@@ -113,7 +114,7 @@ func TestSubmit_MissingField(t *testing.T) {
 	rec := serve(t, router, http.MethodPost, "/v1/tasks", `{}`)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Empty(t, mr.Keys())
+	assert.Empty(t, taskKeys(mr))
 }
 
 // битый JSON → 400, ничего не записано.
@@ -123,7 +124,7 @@ func TestSubmit_InvalidJSON(t *testing.T) {
 	rec := serve(t, router, http.MethodPost, "/v1/tasks", `{ not json `)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Empty(t, mr.Keys())
+	assert.Empty(t, taskKeys(mr))
 }
 
 // ВАЖНО (фиксируем решение): submit НЕ декодит вход. Заведомо нечитаемый, но
@@ -164,8 +165,7 @@ func TestSubmit_UniqueKeys(t *testing.T) {
 	_, err = store.Get(context.Background(), r2.TaskKey)
 	require.NoError(t, err)
 
-	list, err := mr.List(queueKey)
-	require.NoError(t, err)
+	list := queuedKeys(t, mr)
 	assert.Len(t, list, 2)
 	assert.Contains(t, list, r1.TaskKey)
 	assert.Contains(t, list, r2.TaskKey)
@@ -360,4 +360,40 @@ func TestStatus_DoneWithoutDegradedOmitsFields(t *testing.T) {
 	body := rec.Body.String()
 	assert.NotContains(t, body, "degraded")
 	assert.NotContains(t, body, "warnings")
+}
+
+// taskKeys — ключи, появившиеся ИЗ-ЗА запроса.
+//
+// Ключ очереди (`tasks:stream`) сюда не входит: он создаётся на старте сервиса,
+// до всяких запросов, и его наличие ничего не говорит о том, записали мы
+// что-то по отказанному запросу или нет.
+func taskKeys(mr *miniredis.Miniredis) []string {
+	var out []string
+	for _, k := range mr.Keys() {
+		if k == queueKey {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// queuedKeys — номерки, лежащие в очереди.
+//
+// Очередь теперь поток, а не список: `mr.List` на нём отвечает «нет такого
+// ключа». Значение номерка лежит в поле `key` записи — так его кладёт
+// `taskstore.Enqueue`.
+func queuedKeys(t *testing.T, mr *miniredis.Miniredis) []string {
+	t.Helper()
+	entries, err := mr.Stream(queueKey)
+	require.NoError(t, err)
+	var out []string
+	for _, e := range entries {
+		for i := 0; i+1 < len(e.Values); i += 2 {
+			if e.Values[i] == "key" {
+				out = append(out, e.Values[i+1])
+			}
+		}
+	}
+	return out
 }

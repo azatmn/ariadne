@@ -106,7 +106,11 @@ func newTestStore(t *testing.T) *taskstore.Store {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	t.Cleanup(mr.Close)
-	return taskstore.New(mr.Addr(), 0, "", time.Hour)
+	s := taskstore.New(mr.Addr(), 0, "", time.Hour)
+	// Очередь — поток с группой потребителей: без неё читать нечем, ровно как
+	// в бою, где группу создаёт main на старте.
+	require.NoError(t, s.EnsureQueue(context.Background()))
+	return s
 }
 
 func newPool(t *testing.T, store *taskstore.Store, r resolver, taskTimeout time.Duration) *Pool {
@@ -153,7 +157,7 @@ func TestProcess_Done(t *testing.T) {
 	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 	saveTask(t, store, "ok", validInput(t))
 
-	pool.process("ok")
+	pool.process(taskstore.Claim{TaskKey: "ok"})
 
 	got, err := store.Get(context.Background(), "ok")
 	require.NoError(t, err)
@@ -169,7 +173,7 @@ func TestProcess_DecodeError_Failed(t *testing.T) {
 	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 	saveTask(t, store, "bad", "!!! не base64 zlib !!!")
 
-	pool.process("bad")
+	pool.process(taskstore.Claim{TaskKey: "bad"})
 
 	got, err := store.Get(context.Background(), "bad")
 	require.NoError(t, err)
@@ -183,7 +187,7 @@ func TestProcess_ResolveError_Failed(t *testing.T) {
 	pool := newPool(t, store, fakeResolver{err: errors.New("kaboom")}, 10*time.Second)
 	saveTask(t, store, "re", validInput(t))
 
-	pool.process("re")
+	pool.process(taskstore.Claim{TaskKey: "re"})
 
 	got, err := store.Get(context.Background(), "re")
 	require.NoError(t, err)
@@ -197,7 +201,7 @@ func TestProcess_ProcessingTimeout_Failed(t *testing.T) {
 	pool := newPool(t, store, fakeResolver{delay: time.Second}, 10*time.Millisecond)
 	saveTask(t, store, "to", validInput(t))
 
-	pool.process("to")
+	pool.process(taskstore.Claim{TaskKey: "to"})
 
 	got, err := store.Get(context.Background(), "to")
 	require.NoError(t, err)
@@ -218,7 +222,7 @@ func TestProcess_SlowProcessing_StillWritesResult(t *testing.T) {
 	pool := newPool(t, store, fakeResolver{delay: 50 * time.Millisecond}, 2*time.Second)
 	saveTask(t, store, "slow", validInput(t))
 
-	pool.process("slow")
+	pool.process(taskstore.Claim{TaskKey: "slow"})
 
 	got, err := store.Get(context.Background(), "slow")
 	require.NoError(t, err)
@@ -231,7 +235,7 @@ func TestProcess_GetMissing_NoPanic(t *testing.T) {
 	store := newTestStore(t)
 	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
 
-	assert.NotPanics(t, func() { pool.process("nope") })
+	assert.NotPanics(t, func() { pool.process(taskstore.Claim{TaskKey: "nope"}) })
 
 	_, err := store.Get(context.Background(), "nope")
 	assert.ErrorIs(t, err, taskstore.ErrNotFound)
@@ -247,7 +251,7 @@ func TestProcess_PanicRecovered_MarksFailed(t *testing.T) {
 	pool := newPoolN(t, store, fakeResolver{shouldPanic: true}, rec, 10*time.Second)
 	saveTask(t, store, "p", validInput(t))
 
-	assert.NotPanics(t, func() { pool.process("p") })
+	assert.NotPanics(t, func() { pool.process(taskstore.Claim{TaskKey: "p"}) })
 
 	got, err := store.Get(context.Background(), "p")
 	require.NoError(t, err)
@@ -343,7 +347,7 @@ func TestProcess_NotifiesOnDone(t *testing.T) {
 	pool := newPoolN(t, store, service.New(testConfig(), nil), rec, 10*time.Second)
 	saveTask(t, store, "n1", validInput(t))
 
-	pool.process("n1")
+	pool.process(taskstore.Claim{TaskKey: "n1"})
 
 	calls := rec.snapshot()
 	require.Len(t, calls, 1)
@@ -358,7 +362,7 @@ func TestProcess_NotifiesOnFailed(t *testing.T) {
 	pool := newPoolN(t, store, fakeResolver{err: errors.New("boom")}, rec, 10*time.Second)
 	saveTask(t, store, "n2", validInput(t))
 
-	pool.process("n2")
+	pool.process(taskstore.Claim{TaskKey: "n2"})
 
 	calls := rec.snapshot()
 	require.Len(t, calls, 1)
@@ -373,7 +377,7 @@ func TestProcess_NotifyErrorDoesNotBreak(t *testing.T) {
 	pool := newPoolN(t, store, service.New(testConfig(), nil), rec, 10*time.Second)
 	saveTask(t, store, "n3", validInput(t))
 
-	assert.NotPanics(t, func() { pool.process("n3") })
+	assert.NotPanics(t, func() { pool.process(taskstore.Claim{TaskKey: "n3"}) })
 
 	got, err := store.Get(context.Background(), "n3")
 	require.NoError(t, err)
@@ -386,7 +390,7 @@ func TestProcess_NoNotifyWhenTaskMissing(t *testing.T) {
 	rec := &recordingNotifier{}
 	pool := newPoolN(t, store, service.New(testConfig(), nil), rec, 10*time.Second)
 
-	pool.process("ghost")
+	pool.process(taskstore.Claim{TaskKey: "ghost"})
 
 	assert.Empty(t, rec.snapshot(), "коллбэка по несуществующей задаче быть не должно")
 }
@@ -426,4 +430,68 @@ func TestPool_CarriesDegradedAndWarningsToCard(t *testing.T) {
 	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shCancel()
 	pool.Shutdown(shCtx)
+}
+
+// breakerResolver ломает Redis ровно между чтением карточки и записью
+// результата. Так ведёт себя моргнувшая сеть: карточка прочиталась, работа
+// сделана, а сохранить её уже некуда.
+type breakerResolver struct {
+	mr *miniredis.Miniredis
+}
+
+func (b breakerResolver) Resolve(_ context.Context, points []geo.Point) (*service.Result, error) {
+	b.mr.SetError("LOADING redis is loading the dataset in memory")
+	return &service.Result{Points: points, LengthMeters: 42}, nil
+}
+
+// Результат не сохранился — значит задача НЕ доведена до конца и обязана
+// остаться числиться за воркером.
+//
+// Это главное свойство всей замены очереди, и проверять его надо прицельно.
+// Мутация показала почему: если расписаться ДО сохранения, все остальные тесты
+// остаются зелёными — а задача при этом теряется навсегда, ровно как раньше.
+func TestProcess_KeepsClaimWhenSaveFails(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+
+	store := taskstore.New(mr.Addr(), 0, "", time.Hour)
+	ctx := context.Background()
+	require.NoError(t, store.EnsureQueue(ctx))
+
+	saveTask(t, store, "lost", validInput(t))
+	require.NoError(t, store.Enqueue(ctx, "lost"))
+
+	claim, err := store.Dequeue(ctx)
+	require.NoError(t, err)
+
+	pool := newPool(t, store, breakerResolver{mr: mr}, 10*time.Second)
+	pool.process(claim)
+
+	// Redis снова в строю — смотрим, чем всё кончилось.
+	mr.SetError("")
+
+	claimed, err := store.Claimed(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), claimed,
+		"результат не сохранён — задача обязана остаться выданной, чтобы её вернули в работу")
+}
+
+// Зеркальный случай: всё прошло успешно — задача не должна оставаться висеть.
+// Без этой проверки «никогда не расписываться» тоже выглядело бы исправным.
+func TestProcess_ReleasesClaimAfterSave(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
+
+	saveTask(t, store, "done", validInput(t))
+	require.NoError(t, store.Enqueue(ctx, "done"))
+	claim, err := store.Dequeue(ctx)
+	require.NoError(t, err)
+
+	pool.process(claim)
+
+	claimed, err := store.Claimed(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, claimed, "задача доведена до конца — висеть в выданных ей незачем")
 }

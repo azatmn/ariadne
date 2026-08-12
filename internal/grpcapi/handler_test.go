@@ -18,14 +18,17 @@ import (
 	"ariadne/internal/taskstore"
 )
 
-const queueKey = "tasks:queue" // должен совпадать с taskstore/queue.go
+const queueKey = "tasks:stream" // должен совпадать с taskstore/queue.go
 
 func testStore(t *testing.T) (*taskstore.Store, *miniredis.Miniredis) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	t.Cleanup(mr.Close)
-	return taskstore.New(mr.Addr(), 0, "", time.Hour), mr
+	store := taskstore.New(mr.Addr(), 0, "", time.Hour)
+	// Как в бою: очередь создаётся на старте сервиса, до первой задачи.
+	require.NoError(t, store.EnsureQueue(context.Background()))
+	return store, mr
 }
 
 func newHandler(t *testing.T) (*Handler, *taskstore.Store, *miniredis.Miniredis) {
@@ -81,8 +84,7 @@ func TestSubmitTask_Valid(t *testing.T) {
 	assert.Equal(t, route, card.Input)
 	assert.False(t, card.CreatedAt.IsZero())
 
-	list, err := mr.List(queueKey)
-	require.NoError(t, err)
+	list := queuedKeys(t, mr)
 	assert.Contains(t, list, resp.GetTaskKey())
 }
 
@@ -91,7 +93,7 @@ func TestSubmitTask_Empty(t *testing.T) {
 	h, _, mr := newHandler(t)
 	_, err := h.SubmitTask(context.Background(), &ariadnepb.SubmitTaskRequest{RouteCompressed: ""})
 	assert.Equal(t, codes.InvalidArgument, grpcCode(t, err))
-	assert.Empty(t, mr.Keys(), "при отказе в Redis не должно появиться ключей")
+	assert.Empty(t, taskKeys(mr), "при отказе в Redis не должно появиться ключей задач")
 }
 
 // мусорный непустой вход принимается (submit не декодит) — станет failed у воркера.
@@ -117,8 +119,7 @@ func TestSubmitTask_UniqueKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, r1.GetTaskKey(), r2.GetTaskKey())
 
-	list, err := mr.List(queueKey)
-	require.NoError(t, err)
+	list := queuedKeys(t, mr)
 	assert.Len(t, list, 2)
 }
 
@@ -233,4 +234,40 @@ func TestGetTask_DoneCarriesDegradedAndWarnings(t *testing.T) {
 	assert.True(t, resp.GetDegraded())
 	require.Len(t, resp.GetWarnings(), 1)
 	assert.Contains(t, resp.GetWarnings()[0], "километраж занижен")
+}
+
+// taskKeys — ключи, появившиеся ИЗ-ЗА запроса.
+//
+// Ключ очереди (`tasks:stream`) сюда не входит: он создаётся на старте сервиса,
+// до всяких запросов, и его наличие ничего не говорит о том, записали мы
+// что-то по отказанному запросу или нет.
+func taskKeys(mr *miniredis.Miniredis) []string {
+	var out []string
+	for _, k := range mr.Keys() {
+		if k == queueKey {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// queuedKeys — номерки, лежащие в очереди.
+//
+// Очередь теперь поток, а не список: `mr.List` на нём отвечает «нет такого
+// ключа». Значение номерка лежит в поле `key` записи — так его кладёт
+// `taskstore.Enqueue`.
+func queuedKeys(t *testing.T, mr *miniredis.Miniredis) []string {
+	t.Helper()
+	entries, err := mr.Stream(queueKey)
+	require.NoError(t, err)
+	var out []string
+	for _, e := range entries {
+		for i := 0; i+1 < len(e.Values); i += 2 {
+			if e.Values[i] == "key" {
+				out = append(out, e.Values[i+1])
+			}
+		}
+	}
+	return out
 }
