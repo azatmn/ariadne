@@ -85,6 +85,10 @@ func (s *Store) EnsureQueue(ctx context.Context) error {
 	err := s.rdb.XGroupCreateMkStream(ctx, streamKey, groupName, "0").Err()
 	if err == nil || strings.Contains(err.Error(), "BUSYGROUP") {
 		// BUSYGROUP — группа уже создана. Обычное дело при перезапуске сервиса.
+		//
+		// Отметка нужна Dequeue: она отличает «инициализацию забыли» (падаем
+		// громко) от «группа была и пропала» (поднимаем сами).
+		s.ensured.Store(true)
 		return nil
 	}
 	return fmt.Errorf("taskstore: ensure queue: %w", err)
@@ -111,18 +115,56 @@ func (s *Store) enqueueAttempt(ctx context.Context, taskKey string, attempt int)
 	return nil
 }
 
-// Dequeue ждёт и забирает задачу из очереди.
-//
-// Задача остаётся числиться за этим процессом до Ack. Блокируется не дольше
-// blockTimeout; если за это время ничего не пришло — возвращает ErrNoTask.
-func (s *Store) Dequeue(ctx context.Context) (Claim, error) {
-	res, err := s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+// readGroup — одна попытка чтения из очереди. Вынесена, потому что Dequeue
+// повторяет её после восстановления группы, и дублировать аргументы нельзя:
+// разойдясь однажды, две копии читали бы по-разному.
+func (s *Store) readGroup(ctx context.Context) ([]redis.XStream, error) {
+	return s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    groupName,
 		Consumer: s.consumer,
 		Streams:  []string{streamKey, ">"}, // ">" = только то, что ещё никому не выдавали
 		Count:    1,
 		Block:    blockTimeout,
 	}).Result()
+}
+
+// isNoGroup — Redis отвечает, что группы (или самой ленты) больше нет.
+//
+// Отдельной ошибки для этого в клиенте нет, поэтому смотрим на префикс ответа
+// сервера — он у Redis стабильный: «NOGROUP No such key … or consumer group …».
+func isNoGroup(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "NOGROUP")
+}
+
+// Dequeue ждёт и забирает задачу из очереди.
+//
+// Задача остаётся числиться за этим процессом до Ack. Блокируется не дольше
+// blockTimeout; если за это время ничего не пришло — возвращает ErrNoTask.
+//
+// Если группа потребителей исчезла ПОСЛЕ того, как её однажды создали, Dequeue
+// поднимает её заново и повторяет попытку. Причина — нагрузочная проверка
+// 2026-08-13: группа живёт отдельно от ленты и создавалась только на старте,
+// поэтому потеря данных в Redis (перезапуск, нехватка памяти, чужая чистка)
+// навсегда останавливала разбор очереди. Redis у заказчика общий, без лимита
+// памяти и без записи на диск — случай штатный, а не экзотический.
+//
+// Два ограничения, оба намеренные.
+//
+// Первое: восстанавливаем только если EnsureQueue уже отработал в этом
+// процессе. Иначе забытый вызов на старте лечился бы сам собой и переставал
+// быть виден — а это ошибка сборки сервиса, и она обязана падать громко.
+//
+// Второе: восстановление идёт ПО ФАКТУ NOGROUP, а не «на всякий случай» перед
+// каждым чтением. Создание группы сбрасывает отметку, докуда дочитали, и
+// задачи, взятые в работу, поехали бы по второму кругу.
+func (s *Store) Dequeue(ctx context.Context) (Claim, error) {
+	res, err := s.readGroup(ctx)
+	if isNoGroup(err) && s.ensured.Load() {
+		if ensureErr := s.EnsureQueue(ctx); ensureErr != nil {
+			return Claim{}, fmt.Errorf("taskstore: dequeue: restore queue: %w", ensureErr)
+		}
+		res, err = s.readGroup(ctx)
+	}
 
 	if errors.Is(err, redis.Nil) {
 		return Claim{}, ErrNoTask

@@ -326,3 +326,73 @@ func newStoreOn(t *testing.T, src *Store, consumer string) *Store {
 	t.Helper()
 	return &Store{rdb: src.rdb, ttl: src.ttl, consumer: consumer}
 }
+
+// Группа потребителей пропала — очередь обязана поднять её сама.
+//
+// Найдено нагрузочной проверкой 2026-08-13. Группа живёт в Redis отдельно от
+// ленты и создавалась ровно один раз, на старте сервиса. Стоило Redis
+// остаться без данных — перезапуск, нехватка памяти, чужая чистка, — и
+// воркеры навсегда упирались в `NOGROUP`: задачи принимались и не разбирались
+// НИКОГДА, при этом снаружи сервис отвечал «здоров».
+//
+// Redis у заказчика общий, без лимита памяти и без записи на диск, так что
+// это вопрос времени, а не экзотика.
+func TestDequeue_RecreatesLostGroup(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "task-1"))
+
+	// Сносим группу, оставляя ленту: так выглядит частичная потеря.
+	require.NoError(t, s.rdb.XGroupDestroy(ctx, streamKey, groupName).Err())
+
+	claim, err := s.Dequeue(ctx)
+	require.NoError(t, err, "потеря группы обязана лечиться сама, без перезапуска")
+	assert.Equal(t, "task-1", claim.TaskKey,
+		"задача, лежавшая в ленте до потери, обязана дойти до воркера")
+}
+
+// Тот же случай, но данных не осталось совсем — как после FLUSHDB или
+// перезапуска Redis без сохранения на диск.
+//
+// Отдельным тестом: здесь исчезает и лента тоже, и её заново создаёт уже
+// `Enqueue`. Первый тест этой ветки не проверяет — там лента уцелела.
+func TestDequeue_RecoversAfterFullDataLoss(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "before-loss"))
+
+	require.NoError(t, s.rdb.FlushDB(ctx).Err())
+
+	// Laravel переотправляет задачу — она приходит уже в пустой Redis.
+	require.NoError(t, s.Enqueue(ctx, "after-loss"))
+
+	claim, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "after-loss", claim.TaskKey)
+}
+
+// Зеркальная проверка: на исправной очереди ничего не пересоздаётся.
+//
+// Без неё предыдущие тесты проходят и на коде, который зовёт EnsureQueue
+// перед каждым чтением. Это выглядело бы безобидно, но снесло бы саму суть
+// группы: пересоздание сбрасывает отметку «докуда дочитали», и задачи,
+// взятые в работу, поехали бы по второму кругу.
+func TestDequeue_DoesNotRecreateHealthyGroup(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+	require.NoError(t, s.Enqueue(ctx, "task-1"))
+	require.NoError(t, s.Enqueue(ctx, "task-2"))
+
+	c1, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "task-1", c1.TaskKey)
+
+	// Вторая выдача обязана принести СЛЕДУЮЩУЮ задачу, а не первую заново.
+	c2, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "task-2", c2.TaskKey,
+		"группу трогать нельзя, пока она жива: иначе чтение начнётся сначала")
+}
