@@ -956,3 +956,75 @@ func TestProcess_AcksSkippedTask(t *testing.T) {
 		"пропустили задачу — обязаны расписаться, иначе её вернут в работу по кругу")
 	assert.Equal(t, int64(0), res.calls.Load())
 }
+
+// failingDequeueStore — очередь, которая всегда отвечает ошибкой, и счётчик
+// попыток. Моделирует устойчивую поломку: Redis недоступен, права отобрали,
+// группа не поднимается.
+type failingDequeueStore struct {
+	*reclaimSpy
+	attempts atomic.Int64
+}
+
+func (f *failingDequeueStore) Dequeue(context.Context) (taskstore.Claim, error) {
+	f.attempts.Add(1)
+	return taskstore.Claim{}, errors.New("redis is down")
+}
+
+// Устойчивая ошибка очереди не должна превращаться в горячий цикл.
+//
+// Замерено на нагрузочной проверке 2026-08-13: воркер писал ошибку и сразу шёл
+// на новый круг, без паузы. Четыре воркера дали 6.1 млн записей в лог за семь
+// минут — 54 тысячи строк в секунду, 40 ГБ в час, процессор в потолок. Диск
+// сервера такое забивает за сутки, и разобраться по такому логу уже нельзя.
+//
+// Проверяем не «медленно», а именно ограниченность: за десять пауз должно
+// пройти около десяти попыток, а не десятки тысяч.
+func TestPool_PausesBetweenQueueErrors(t *testing.T) {
+	old := dequeueErrorPause
+	dequeueErrorPause = 20 * time.Millisecond
+	t.Cleanup(func() { dequeueErrorPause = old })
+
+	st := &failingDequeueStore{reclaimSpy: newReclaimSpy()}
+	pool := newPool(t, st, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	time.Sleep(200 * time.Millisecond) // ~10 пауз
+	cancel()
+
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+
+	n := st.attempts.Load()
+	assert.Positive(t, n, "воркер обязан продолжать попытки, а не сдаться навсегда")
+	assert.Less(t, n, int64(50),
+		"между попытками нужна пауза: без неё это горячий цикл на 54 тыс. попыток в секунду")
+}
+
+// Пауза обязана прерываться остановкой сервиса.
+//
+// Иначе выключение затянется на длину паузы: воркер спит секунду, а его ждут.
+// Сценарий обычный — Redis лежит, в это время катят новую версию.
+func TestPool_ErrorPauseDoesNotDelayShutdown(t *testing.T) {
+	old := dequeueErrorPause
+	dequeueErrorPause = 5 * time.Second // намеренно длиннее, чем ждёт тест
+	t.Cleanup(func() { dequeueErrorPause = old })
+
+	st := &failingDequeueStore{reclaimSpy: newReclaimSpy()}
+	pool := newPool(t, st, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	require.Eventually(t, func() bool { return st.attempts.Load() > 0 },
+		time.Second, 5*time.Millisecond, "воркер должен успеть заснуть в паузе")
+
+	cancel()
+	start := time.Now()
+	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shCancel()
+	pool.Shutdown(shCtx)
+
+	assert.Less(t, time.Since(start), 2*time.Second,
+		"остановка не должна ждать конца паузы")
+}
