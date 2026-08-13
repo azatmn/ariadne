@@ -16,7 +16,7 @@ func TestIntegrationHealthEndpoints(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	router := NewRouter(NewHandler(nil), logger, cfg.MaxBodyBytes, false)
+	router := NewRouter(NewHandler(nil), logger, cfg.MaxBodyBytes, false, nil)
 
 	tests := []struct {
 		name string
@@ -43,7 +43,7 @@ func TestIntegrationSwaggerRoute(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 1 << 20
 	logger := testLogger()
-	router := NewRouter(NewHandler(nil), logger, cfg.MaxBodyBytes, true)
+	router := NewRouter(NewHandler(nil), logger, cfg.MaxBodyBytes, true, nil)
 
 	r := httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil)
 	w := httptest.NewRecorder()

@@ -86,7 +86,7 @@ func main() {
 
 	// HTTP
 	httpHandler := api.NewHandler(store)
-	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes, cfg.SwaggerEnabled)
+	router := api.NewRouter(httpHandler, logger, cfg.MaxBodyBytes, cfg.SwaggerEnabled, pool.QueueBroken)
 
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,

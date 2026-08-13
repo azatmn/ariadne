@@ -1028,3 +1028,61 @@ func TestPool_ErrorPauseDoesNotDelayShutdown(t *testing.T) {
 	assert.Less(t, time.Since(start), 2*time.Second,
 		"остановка не должна ждать конца паузы")
 }
+
+// Пул обязан показывать наружу, что разбор очереди сломан.
+//
+// Нагрузочная проверка 2026-08-13 вскрыла худший вид отказа: задачи не
+// разбирались вовсе, а `/readyz` отвечал 200. Мониторинг молчал, и понять,
+// что сервис мёртв, можно было только по тому, что заказчик не дождался
+// ответа. Ручка готовности для того и существует, чтобы такое ловить.
+func TestPool_ReportsBrokenQueue(t *testing.T) {
+	old := dequeueErrorPause
+	dequeueErrorPause = 10 * time.Millisecond
+	t.Cleanup(func() { dequeueErrorPause = old })
+	oldStale := queueStaleAfter
+	queueStaleAfter = 100 * time.Millisecond
+	t.Cleanup(func() { queueStaleAfter = oldStale })
+
+	st := &failingDequeueStore{reclaimSpy: newReclaimSpy()}
+	pool := newPool(t, st, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer shCancel()
+		pool.Shutdown(shCtx)
+	})
+
+	require.Eventually(t, pool.QueueBroken, time.Second, 10*time.Millisecond,
+		"очередь отвечает одними ошибками — сервис обязан признать себя негодным")
+}
+
+// Зеркальный тест: исправная, но ПУСТАЯ очередь — это не поломка.
+//
+// Без него проверка выше проходит и на коде, который всегда отвечает
+// «сломано»: ночью задач нет часами, и объявлять сервис негодным за это
+// значит выкинуть его из балансировщика на ровном месте.
+func TestPool_IdleQueueIsNotBroken(t *testing.T) {
+	oldStale := queueStaleAfter
+	queueStaleAfter = 100 * time.Millisecond
+	t.Cleanup(func() { queueStaleAfter = oldStale })
+
+	// reclaimSpy отвечает ErrNoTask: сходили в Redis, задач нет — всё в порядке.
+	st := newReclaimSpy()
+	pool := newPool(t, st, service.New(testConfig(), nil), time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer shCancel()
+		pool.Shutdown(shCtx)
+	})
+
+	time.Sleep(300 * time.Millisecond) // втрое дольше порога
+	assert.False(t, pool.QueueBroken(),
+		"пустая очередь — обычное дело, это не отказ")
+}

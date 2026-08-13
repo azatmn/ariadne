@@ -8,7 +8,10 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
-func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64, swaggerEnabled bool) http.Handler {
+// NewRouter собирает HTTP-роутер. queueBroken — проверка «разбор очереди
+// мёртв» для /readyz; nil, если спрашивать не у кого (debug-сервер работает
+// без очереди вовсе).
+func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64, swaggerEnabled bool, queueBroken func() bool) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(Recover(logger))
@@ -19,7 +22,7 @@ func NewRouter(h *Handler, logger *slog.Logger, maxBodyBytes int64, swaggerEnabl
 	errMw := ErrorMiddleware(logger)
 
 	r.Get("/healthz", Healthz)
-	r.Get("/readyz", Readyz)
+	r.Get("/readyz", ReadyzHandler(queueBroken))
 
 	// Асинхронные задачи (синхронная чистка вынесена в cmd/debugserver).
 	r.Post("/v1/tasks", errMw(h.HandleSubmit))
