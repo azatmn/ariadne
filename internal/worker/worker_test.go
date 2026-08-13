@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -823,4 +824,135 @@ func TestPool_ReclaimErrorDoesNotDropPoisoned(t *testing.T) {
 	shCtx, shCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shCancel()
 	pool.Shutdown(shCtx)
+}
+
+// countingResolver считает, сколько раз его позвали. Нужен там, где проверяем
+// не результат, а сам факт работы: посчитали заново то, что уже посчитано.
+type countingResolver struct {
+	calls atomic.Int64
+}
+
+func (c *countingResolver) Resolve(_ context.Context, points []geo.Point) (*service.Result, error) {
+	c.calls.Add(1)
+	return &service.Result{Points: points, LengthMeters: 42}, nil
+}
+
+// Задачу с готовой карточкой не считают заново.
+//
+// Сценарий приходит из нагрузочной проверки 2026-08-13. Группа потребителей
+// живёт в Redis отдельно от самой ленты; если её потерять, восстановление
+// начинает читать ленту С НАЧАЛА — иначе задачи, которых никто не взял,
+// пропали бы навсегда. Значит воркеру снова приносят номерки, посчитанные
+// час назад, и без этой проверки он считает их по второму разу: на сотне
+// маршрутов это семь минут работы впустую и перезапись готовых ответов
+// (результат мог отличаться — под нагрузкой дорисовка успевает по-разному).
+//
+// Правильное поведение: увидел терминальный статус — расписался и пошёл
+// дальше, не трогая ни маршрутизатор, ни карточку.
+func TestProcess_SkipsAlreadyFinishedTask(t *testing.T) {
+	store := newTestStore(t)
+	res := &countingResolver{}
+	pool := newPool(t, store, res, 10*time.Second)
+
+	// Карточка уже доведена до конца: результат посчитан и лежит.
+	ok, err := store.SaveNew(context.Background(), &taskstore.Task{
+		Key: "already", Status: taskstore.StatusDone,
+		Input: validInput(t), Result: "готовый-результат", LengthMeters: 777,
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	pool.process(taskstore.Claim{TaskKey: "already"})
+
+	assert.Equal(t, int64(0), res.calls.Load(),
+		"готовую задачу считать заново нельзя — это работа впустую")
+
+	got, err := store.Get(context.Background(), "already")
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusDone, got.Status)
+	assert.Equal(t, "готовый-результат", got.Result, "прежний ответ обязан уцелеть")
+	assert.Equal(t, 777.0, got.LengthMeters)
+}
+
+// То же для задачи, признанной неудачной: её тоже не переигрываем.
+//
+// Отдельным тестом, а не «и failed заодно»: это разные ветки в карточке, и
+// проверка на один статус пропустила бы вторую.
+func TestProcess_SkipsAlreadyFailedTask(t *testing.T) {
+	store := newTestStore(t)
+	res := &countingResolver{}
+	pool := newPool(t, store, res, 10*time.Second)
+
+	ok, err := store.SaveNew(context.Background(), &taskstore.Task{
+		Key: "dead", Status: taskstore.StatusFailed,
+		Input: validInput(t), Error: "prior failure",
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	pool.process(taskstore.Claim{TaskKey: "dead"})
+
+	assert.Equal(t, int64(0), res.calls.Load())
+
+	got, err := store.Get(context.Background(), "dead")
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusFailed, got.Status)
+	assert.Equal(t, "prior failure", got.Error, "прежняя причина обязана уцелеть")
+}
+
+// Зеркальный тест: задачу в работе (`pending`) считать НАДО.
+//
+// Без него проверка выше проходит и на коде, который не считает вообще
+// ничего: «не сделал лишнего» обязано идти в паре с «сделал нужное».
+func TestProcess_StillHandlesPendingTask(t *testing.T) {
+	store := newTestStore(t)
+	res := &countingResolver{}
+	pool := newPool(t, store, res, 10*time.Second)
+	saveTask(t, store, "fresh", validInput(t))
+
+	pool.process(taskstore.Claim{TaskKey: "fresh"})
+
+	assert.Equal(t, int64(1), res.calls.Load(), "новую задачу обязаны посчитать")
+
+	got, err := store.Get(context.Background(), "fresh")
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusDone, got.Status)
+}
+
+// Пропуская готовую задачу, воркер обязан РАСПИСАТЬСЯ.
+//
+// Мутация показала дыру: тесты выше проходили и на коде, который просто
+// выходил, не подтверждая номерок. А без расписки задача остаётся числиться
+// выданной, уборщик возвращает её снова — и так пять кругов, после чего её
+// объявят ядовитой и перепишут ГОТОВУЮ карточку в failed. То есть пропуск без
+// расписки не «ничего не делает», а рушит верный ответ окольным путём.
+func TestProcess_AcksSkippedTask(t *testing.T) {
+	store := newTestStore(t)
+	res := &countingResolver{}
+	pool := newPool(t, store, res, 10*time.Second)
+
+	ok, err := store.SaveNew(context.Background(), &taskstore.Task{
+		Key: "acked", Status: taskstore.StatusDone,
+		Input: validInput(t), Result: "готовый-результат",
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// Номерок берём НАСТОЯЩИЙ, через очередь: подтверждать можно только то,
+	// что было выдано, и подделанный Claim ничего бы не проверил.
+	require.NoError(t, store.Enqueue(context.Background(), "acked"))
+	claim, err := store.Dequeue(context.Background())
+	require.NoError(t, err)
+
+	claimed, err := store.Claimed(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), claimed, "номерок выдан и ещё не подтверждён")
+
+	pool.process(claim)
+
+	claimed, err = store.Claimed(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), claimed,
+		"пропустили задачу — обязаны расписаться, иначе её вернут в работу по кругу")
+	assert.Equal(t, int64(0), res.calls.Load())
 }
