@@ -311,7 +311,11 @@ func (s *Store) DropIdleConsumers(ctx context.Context, minIdle time.Duration) (i
 
 	dropped := 0
 	for _, c := range list {
-		if c.Name == s.consumer || c.Pending > 0 || c.Idle < minIdle {
+		// Простой не может быть отрицательным, но поддельный Redis в тестах
+		// отдаёт `-1ms`. Приводим к нулю, чтобы правило было определено на любом
+		// ответе, а не зависело от причуд конкретной реализации.
+		idle := max(c.Idle, 0)
+		if c.Name == s.consumer || c.Pending > 0 || idle < minIdle {
 			continue
 		}
 		if err := s.rdb.XGroupDelConsumer(ctx, streamKey, groupName, c.Name).Err(); err != nil {

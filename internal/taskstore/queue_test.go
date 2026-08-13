@@ -279,9 +279,15 @@ func TestDropIdleConsumers_RemovesOnlyIdleAndEmpty(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, s.EnsureQueue(ctx))
 
-	// Живой потребитель — этот процесс, он держит невыполненную задачу.
+	// ЧУЖОЙ процесс берёт задачу и не подтверждает её.
+	//
+	// Чужой, а не этот, — принципиально. Свой защищён отдельной проверкой «это
+	// я», и на нём не видно, работает ли главное правило: «не трогать того, за
+	// кем числится невыполненная задача». Мутация это показала — снятие
+	// проверки на невыполненные оставляло тест зелёным.
+	other := newStoreOn(t, s, "other-process")
 	require.NoError(t, s.Enqueue(ctx, "held"))
-	_, err := s.Dequeue(ctx)
+	_, err := other.Dequeue(ctx)
 	require.NoError(t, err)
 
 	// Порог 0 — «простаивают все»: так проверка не зависит от часов.
@@ -292,4 +298,31 @@ func TestDropIdleConsumers_RemovesOnlyIdleAndEmpty(t *testing.T) {
 	n, err := s.Claimed(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n, "и его задача обязана остаться выданной")
+}
+
+// А вот молчащего и пустого — можно и нужно: ради этого всё и затевалось.
+func TestDropIdleConsumers_RemovesDeadOne(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+
+	// Чужой процесс сделал свою работу и ушёл: задача взята, доведена до конца
+	// и подтверждена. За ним не числится ничего — только имя в группе.
+	other := newStoreOn(t, s, "dead-process")
+	require.NoError(t, s.Enqueue(ctx, "finished-by-other"))
+	c, err := other.Dequeue(ctx)
+	require.NoError(t, err)
+	require.NoError(t, other.Ack(ctx, c))
+
+	dropped, err := s.DropIdleConsumers(ctx, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, dropped, "имя ушедшего процесса обязано убраться")
+}
+
+// newStoreOn — второй Store на том же Redis, но с другим именем процесса.
+// Нужен, чтобы отличать «свой» от «чужого»: на своём половина правил не
+// проверяется, потому что его защищает отдельная проверка.
+func newStoreOn(t *testing.T, src *Store, consumer string) *Store {
+	t.Helper()
+	return &Store{rdb: src.rdb, ttl: src.ttl, consumer: consumer}
 }
