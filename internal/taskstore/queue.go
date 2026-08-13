@@ -37,15 +37,6 @@ const (
 	// одной группе: запись достаётся ровно одному из них.
 	groupName = "tasks:workers"
 
-	// streamMaxLen — потолок длины потока.
-	//
-	// Подтверждённые записи из потока НЕ исчезают: `XACK` снимает их только со
-	// списка выданного. Без обрезки поток растёт вечно и съедает память
-	// общего Redis. Сто тысяч — это запас на порядок больше суточного объёма,
-	// а обрезка приблизительная (`~`), чтобы Redis не тратил время на точное
-	// соблюдение границы.
-	streamMaxLen = 100_000
-
 	// reclaimBatch — сколько брошенных записей забираем за один заход.
 	// Потолок нужен, чтобы уборщик не выгребал разом всё после долгой аварии
 	// и не заваливал воркеров: остаток заберётся на следующем круге.
@@ -109,8 +100,6 @@ func (s *Store) Enqueue(ctx context.Context, taskKey string) error {
 func (s *Store) enqueueAttempt(ctx context.Context, taskKey string, attempt int) error {
 	err := s.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamKey,
-		MaxLen: streamMaxLen,
-		Approx: true,
 		Values: map[string]any{
 			"key":        taskKey,
 			attemptField: strconv.Itoa(attempt),
@@ -256,4 +245,88 @@ func (s *Store) Claimed(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("taskstore: pending: %w", err)
 	}
 	return res.Count, nil
+}
+
+// Trim убирает из потока то, что уже разобрано.
+//
+// Обрезать поток надо: подтверждённые записи из него НЕ исчезают сами (`XACK`
+// снимает их только со списка выданного), и без уборки он растёт бесконечно.
+//
+// Но обрезать ПО ДЛИНЕ нельзя. `MAXLEN` выкидывает самые старые записи, не
+// глядя, доведена задача до конца или ещё считается: воркер взял задачу, в это
+// время накидали новых сверх потолка — и его запись исчезла вместе с задачей.
+// Ровно та беда, ради которой очередь и переводили на поток.
+//
+// Поэтому режем по границе, а не по числу: удаляем всё СТАРШЕ самой старой
+// невыполненной записи. Такая граница безопасна по построению — за ней нет
+// ничего, что кому-то ещё нужно. Длина потока при этом ограничена не потолком,
+// а объёмом незавершённой работы, и это правильная мера: копится ровно то, что
+// не доделано.
+func (s *Store) Trim(ctx context.Context) error {
+	// Самая старая невыполненная запись. Пусто — значит доделано всё, и резать
+	// можно вплоть до последней выданной.
+	pend, err := s.rdb.XPending(ctx, streamKey, groupName).Result()
+	if err != nil {
+		return fmt.Errorf("taskstore: trim: pending: %w", err)
+	}
+
+	minID := pend.Lower
+	if minID == "" {
+		info, err := s.rdb.XInfoGroups(ctx, streamKey).Result()
+		if err != nil {
+			return fmt.Errorf("taskstore: trim: groups: %w", err)
+		}
+		for _, g := range info {
+			if g.Name == groupName {
+				minID = g.LastDeliveredID
+			}
+		}
+		if minID == "" {
+			return nil // ничего ещё не выдавали — резать нечего
+		}
+	}
+
+	if err := s.rdb.XTrimMinID(ctx, streamKey, minID).Err(); err != nil {
+		return fmt.Errorf("taskstore: trim: %w", err)
+	}
+	return nil
+}
+
+// DropIdleConsumers убирает из группы имена процессов, которые давно молчат и
+// ничего за собой не держат.
+//
+// Каждый запуск сервиса регистрируется под своим именем (см. `consumerName`), а
+// при остановке имя остаётся в группе навсегда. Ломается от этого ничего, но
+// Redis общий, и за полгода перезапусков там накопятся сотни записей, которые
+// сами не уберутся.
+//
+// Два условия, и оба обязательны: за потребителем НЕТ невыполненных задач и он
+// молчит дольше `minIdle`. Первое защищает от удаления того, кто прямо сейчас
+// считает; второе — от удаления соседнего процесса, который просто ждёт задачу.
+func (s *Store) DropIdleConsumers(ctx context.Context, minIdle time.Duration) (int, error) {
+	list, err := s.rdb.XInfoConsumers(ctx, streamKey, groupName).Result()
+	if err != nil {
+		return 0, fmt.Errorf("taskstore: consumers: %w", err)
+	}
+
+	dropped := 0
+	for _, c := range list {
+		if c.Name == s.consumer || c.Pending > 0 || c.Idle < minIdle {
+			continue
+		}
+		if err := s.rdb.XGroupDelConsumer(ctx, streamKey, groupName, c.Name).Err(); err != nil {
+			return dropped, fmt.Errorf("taskstore: drop consumer %s: %w", c.Name, err)
+		}
+		dropped++
+	}
+	return dropped, nil
+}
+
+// streamLen — сколько записей в потоке. Для тестов и наблюдения.
+func (s *Store) streamLen(ctx context.Context) (int64, error) {
+	n, err := s.rdb.XLen(ctx, streamKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("taskstore: stream len: %w", err)
+	}
+	return n, nil
 }

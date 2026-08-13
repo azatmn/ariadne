@@ -464,6 +464,11 @@ func (s *brokenSaveStore) Ack(context.Context, taskstore.Claim) error {
 func (s *brokenSaveStore) Reclaim(context.Context, time.Duration, int) ([]string, []string, error) {
 	return nil, nil, nil
 }
+func (s *brokenSaveStore) Trim(context.Context) error { return nil }
+
+func (s *brokenSaveStore) DropIdleConsumers(context.Context, time.Duration) (int, error) {
+	return 0, nil
+}
 
 // Результат не сохранился — значит задача НЕ доведена до конца, и расписки
 // быть не должно ни при каких условиях.
@@ -542,6 +547,12 @@ func (r *reclaimSpy) Update(_ context.Context, task *taskstore.Task) error {
 }
 
 func (r *reclaimSpy) Ack(context.Context, taskstore.Claim) error { return nil }
+
+func (r *reclaimSpy) Trim(context.Context) error { return nil }
+
+func (r *reclaimSpy) DropIdleConsumers(context.Context, time.Duration) (int, error) {
+	return 0, nil
+}
 
 func (r *reclaimSpy) Reclaim(_ context.Context, minIdle time.Duration, _ int) ([]string, []string, error) {
 	r.mu.Lock()

@@ -42,6 +42,8 @@ type notifier interface {
 // все тесты зелёными, хотя терял задачу ровно так же, как старая очередь.
 type store interface {
 	Dequeue(ctx context.Context) (taskstore.Claim, error)
+	Trim(ctx context.Context) error
+	DropIdleConsumers(ctx context.Context, minIdle time.Duration) (int, error)
 	Get(ctx context.Context, taskKey string) (*taskstore.Task, error)
 	Update(ctx context.Context, task *taskstore.Task) error
 	Ack(ctx context.Context, c taskstore.Claim) error
@@ -141,6 +143,21 @@ func (p *Pool) reclaimOnce(ctx context.Context, minIdle time.Duration) {
 	}
 	for _, key := range poisoned {
 		p.failPoisoned(key)
+	}
+
+	// Уборка самого потока — здесь же, тем же кругом. Отдельная горутина ради
+	// двух команд раз в минуту не нужна.
+	if err := p.store.Trim(opCtx); err != nil {
+		p.logger.Error("stream trim failed", "error", err)
+	}
+
+	// Имена умерших процессов. Порог берём с большим запасом: сосед, который
+	// просто ждёт задачу, молчит недолго, а вот запись от процесса, которого
+	// нет неделю, — это точно мусор.
+	if n, err := p.store.DropIdleConsumers(opCtx, consumerIdleTTL); err != nil {
+		p.logger.Error("consumer cleanup failed", "error", err)
+	} else if n > 0 {
+		p.logger.Info("idle consumers removed", "count", n)
 	}
 }
 
@@ -251,6 +268,13 @@ var reclaimInterval = time.Minute
 // ничего. Пять — с запасом на случайные беды (моргнула сеть, выключили
 // контейнер), но заведомо конечно.
 const maxAttempts = 5
+
+// consumerIdleTTL — сколько имя процесса живёт в группе без дела.
+//
+// Каждый запуск регистрируется под своим именем, при остановке имя остаётся.
+// Сутки — с запасом: живой процесс за это время сто раз возьмёт задачу, а
+// имя от контейнера, которого нет со вчера, точно мусор.
+const consumerIdleTTL = 24 * time.Hour
 
 // ioTimeout — таймаут на чтение/запись карточки в Redis. Отдельный от таймаута
 // обработки задачи. var (а не const), чтобы тесты могли занижать его.

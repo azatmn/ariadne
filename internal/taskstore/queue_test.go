@@ -2,6 +2,7 @@ package taskstore
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -209,4 +210,86 @@ func TestReclaim_EmptyQueueIsNoop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, requeued)
 	assert.Empty(t, poisoned)
+}
+
+// --- обрезка потока и уборка потребителей ---------------------------------
+
+// Обрезка не смеет трогать невыполненную задачу.
+//
+// Поток не самоочищается: подтверждённые записи остаются в нём навсегда, и без
+// обрезки он растёт бесконечно. Но обрезать по длине опасно — Redis выкидывает
+// самые старые, не глядя, доведена задача до конца или ещё считается. Резать
+// можно только то, что старше самой старой невыполненной.
+func TestTrim_KeepsUnacknowledgedEntries(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+
+	// Первая задача берётся в работу и НЕ подтверждается.
+	require.NoError(t, s.Enqueue(ctx, "in-progress"))
+	claim, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+
+	// Поверх неё сыпется много новых.
+	for i := range 50 {
+		require.NoError(t, s.Enqueue(ctx, fmt.Sprintf("later-%d", i)))
+	}
+
+	require.NoError(t, s.Trim(ctx))
+
+	n, err := s.Claimed(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "невыполненная задача обязана пережить обрезку")
+
+	// И она по-прежнему подтверждается — запись на месте, а не выброшена.
+	require.NoError(t, s.Ack(ctx, claim))
+}
+
+// Когда невыполненных нет, обрезка убирает разобранное: ради неё всё и затеяно.
+func TestTrim_RemovesFinishedEntries(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+
+	for i := range 20 {
+		require.NoError(t, s.Enqueue(ctx, fmt.Sprintf("done-%d", i)))
+		c, err := s.Dequeue(ctx)
+		require.NoError(t, err)
+		require.NoError(t, s.Ack(ctx, c))
+	}
+
+	before, err := s.streamLen(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(20), before)
+
+	require.NoError(t, s.Trim(ctx))
+
+	after, err := s.streamLen(ctx)
+	require.NoError(t, err)
+	assert.Less(t, after, before, "разобранные записи должны уйти: %d → %d", before, after)
+}
+
+// Имена процессов в группе не должны копиться вечно.
+//
+// Каждый запуск сервиса регистрируется под своим именем, а при остановке имя
+// остаётся. За полгода перезапусков их накапливаются сотни — мусор в общем
+// Redis, который сам не убирается.
+func TestDropIdleConsumers_RemovesOnlyIdleAndEmpty(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.EnsureQueue(ctx))
+
+	// Живой потребитель — этот процесс, он держит невыполненную задачу.
+	require.NoError(t, s.Enqueue(ctx, "held"))
+	_, err := s.Dequeue(ctx)
+	require.NoError(t, err)
+
+	// Порог 0 — «простаивают все»: так проверка не зависит от часов.
+	dropped, err := s.DropIdleConsumers(ctx, 0)
+	require.NoError(t, err)
+	assert.Zero(t, dropped, "потребителя с невыполненной задачей удалять нельзя")
+
+	n, err := s.Claimed(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "и его задача обязана остаться выданной")
 }
