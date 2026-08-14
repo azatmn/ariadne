@@ -1,4 +1,4 @@
-.PHONY: run test lint proto swagger bench fuzz
+.PHONY: run test lint vuln ci proto swagger bench fuzz
 
 run:
 	go run ./cmd/server
@@ -8,6 +8,23 @@ test:
 
 lint:
 	go vet ./...
+
+# Уязвимости — то же, что гоняет CI. Ставит инструмент, если его нет.
+vuln:
+	@command -v govulncheck >/dev/null || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
+# То же самое, что стадия `test` в .gitlab-ci.yml, и в том же порядке.
+# Гонять перед пушем: дешевле подождать пять минут здесь, чем узнавать
+# о падении из красной трубы.
+#
+# Одно отличие от CI остаётся и убрать его нельзя: там сборка идёт в образе
+# с версией из `GO_VERSION`, здесь — тем компилятором, что стоит на машине.
+# Разойтись они могут только если забыть обновить одно из двух мест, а этого
+# как раз и не даёт строка `go` в go.mod — она точная, до заплатки.
+ci: lint
+	CGO_ENABLED=1 go test -race ./...
+	$(MAKE) vuln
 
 proto:
 	protoc --go_out=. --go_opt=module=ariadne \
