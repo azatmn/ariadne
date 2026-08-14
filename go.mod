@@ -4,7 +4,7 @@ module ariadne
 //
 // В стандартной библиотеке go1.26.0 семнадцать уязвимостей, до которых наш код
 // дотягивается: `crypto/tls` на исходящих запросах к OSRM и коллбэкам,
-// `net/textproto` и `net` на разборе входящих. Все закрыты заплатками до 1.26.5.
+// `net/textproto` и `net` на разборе входящих. Все закрыты заплатками до 1.26.6.
 //
 // Почему именно ЭТА строка, а не `toolchain`. Строку `go` Go проверяет ВСЕГДА,
 // в том числе когда качать новые версии запрещено — а запрещено оно в
@@ -13,11 +13,11 @@ module ariadne
 // тесты на уязвимой 1.26.3, имея её в go.mod. С точной строкой `go` он
 // откажется собирать вовсе:
 //
-//	go: go.mod requires go >= 1.26.5 (running go 1.26.0; GOTOOLCHAIN=local)
+//	go: go.mod requires go >= 1.26.6 (running go 1.26.0; GOTOOLCHAIN=local)
 //
 // Где качать разрешено (обычная машина разработчика), Go скачает нужную
 // заплатку сам — ставить её руками не надо.
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -45,12 +45,12 @@ require (
 	github.com/swaggo/files/v2 v2.0.0 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/mod v0.34.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
-	golang.org/x/tools v0.43.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/tools v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
