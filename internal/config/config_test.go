@@ -30,7 +30,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"StopRadiusMeters", cfg.StopRadiusMeters, 50.0},
 		{"StopMinPoints", cfg.StopMinPoints, 5},
 		{"SimplifyMinMeters", cfg.SimplifyMinMeters, 5.0},
-		{"ResolveTimeout", cfg.ResolveTimeout, 25 * time.Second},
+		{"ResolveTimeout", cfg.ResolveTimeout, 60 * time.Second},
 		{"LogLevel", cfg.LogLevel, "info"},
 	}
 

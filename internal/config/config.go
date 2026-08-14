@@ -86,7 +86,16 @@ func Load() (*Config, error) {
 		MaxBodyBytes:         envInt64("MAX_BODY_BYTES", 10<<20),         // 10 MB
 		MaxDecompressedBytes: envInt64("MAX_DECOMPRESSED_BYTES", 20<<20), // 20 MB
 		MaxPoints:            envInt("MAX_POINTS", 50_000),
-		ResolveTimeout:       envDuration("RESOLVE_TIMEOUT", 25*time.Second),
+		// Бюджет на задачу. Шестьдесят секунд — не круглое число с потолка, а
+		// замер 2026-08-13: двадцать самых крупных треков при четырёх воркерах
+		// укладываются в 45.1 с, медиана 27 с. Прежние 25 с обрубали работу на
+		// середине — деградировали 12 задач из 20, и у них до 78 % дыр
+		// оставались прямыми, то есть километраж молча занижался.
+		//
+		// Число привязано к скорости маршрутизатора, а не к нашему коду: с
+		// боевым OSRM (запрос 100 мс против 3 мс у локального, матричная ручка
+		// закрыта) его придётся мерить заново.
+		ResolveTimeout: envDuration("RESOLVE_TIMEOUT", 60*time.Second),
 
 		// Упаковка
 		DedupDistanceMeters: envFloat("DEDUP_DISTANCE_METERS", 2.0),
