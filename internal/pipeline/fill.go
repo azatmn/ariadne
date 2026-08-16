@@ -103,6 +103,55 @@ type RouteSource interface {
 	RouteGeometry(ctx context.Context, a, b geo.Point) (*osrm.Route, bool)
 }
 
+// hintedRouteSource — источник, умеющий ещё и подсказку направления.
+//
+// Отдельным интерфейсом, а не расширением RouteSource: подсказка нужна только
+// дорисовке, и требовать её от всех реализаций (включая тестовые двойники и
+// будущие источники) значило бы навязывать им знание про разделённые трассы.
+// Источник без этого метода работает как раньше.
+type hintedRouteSource interface {
+	RouteGeometryHinted(ctx context.Context, a, b geo.Point, bearingDeg float64) (*osrm.Route, bool)
+}
+
+// bestRoute — путь по дорогам с поправкой на сторону разделённой трассы.
+//
+// Точка от трекера ложится между двумя проезжими частями (на ЦКАД это 4–8
+// метров до каждой), маршрутизатор выбирает сторону сам и, промахнувшись,
+// ведёт до ближайшего разворота: 25.7 км вместо 2.2, на М-12 87.9 вместо 22.5.
+// Дорисовка считала это крюком, отказывалась рисовать, и на карте оставалась
+// прямая через поля — хотя машина ехала честно, 63 км/ч.
+//
+// Два правила, оба ради безопасности:
+//
+//   - переспрашиваем ТОЛЬКО когда без подсказки вышел крюк. На нормальных дырах
+//     (а их подавляющее большинство) второго запроса нет: боевой маршрутизатор
+//     общий на все сервисы и держит 75 запросов в секунду;
+//   - берём КОРОТКИЙ из двух ответов. Если подсказка не помогла или навредила
+//     (машина в дыре разворачивалась, и направление по концам посчиталось
+//     неверно), остаётся прежний результат. Хуже стать не может по построению.
+func (f FillGaps) bestRoute(ctx context.Context, a, b geo.Point) (*osrm.Route, bool) {
+	r, ok := f.Routes.RouteGeometry(ctx, a, b)
+	if !ok {
+		return nil, false
+	}
+
+	hinter, canHint := f.Routes.(hintedRouteSource)
+	if !canHint {
+		return r, true
+	}
+
+	straight := geo.Haversine(a, b)
+	if straight <= 0 || r.Distance/straight <= FreeDetour {
+		return r, true // дорога почти повторяет прямую — подсказывать нечего
+	}
+
+	hinted, ok := hinter.RouteGeometryHinted(ctx, a, b, geo.BearingDegrees(a, b))
+	if !ok || hinted.Distance >= r.Distance {
+		return r, true
+	}
+	return hinted, true
+}
+
 // FillReport — что дорисовка сделала с треком.
 type FillReport struct {
 	Gaps     int     // сколько дыр нашлось
@@ -260,7 +309,7 @@ func (f FillGaps) ask(ctx context.Context, points []geo.Point, gaps []gap) ([]*o
 			}()
 			for k := range jobs {
 				g := gaps[k]
-				if r, ok := f.Routes.RouteGeometry(ctx, points[g.at], points[g.at+1]); ok {
+				if r, ok := f.bestRoute(ctx, points[g.at], points[g.at+1]); ok {
 					routes[k] = r
 				}
 			}

@@ -97,3 +97,70 @@ func TestHaversineAntipodal(t *testing.T) {
 	want := math.Pi * earthRadius
 	assert.InDelta(t, want, Haversine(a, b), 1e-3, "антиподы = половина окружности")
 }
+
+// BearingDegrees — азимут в градусах: понадобился, чтобы подсказывать
+// маршрутизатору сторону разделённой трассы.
+//
+// Внутренний bearing отдаёт радианы и может быть отрицательным (atan2), а
+// OSRM ждёт 0…360 по часовой от севера. Проверяем именно это преобразование:
+// ошибка в нём тихо развернёт подсказку и приведёт к маршруту через разворот —
+// то есть ровно к той беде, которую чиним.
+func TestBearingDegrees_MainDirections(t *testing.T) {
+	origin := Point{Lat: 55.0, Lon: 37.0}
+	cases := []struct {
+		name string
+		to   Point
+		want float64
+	}{
+		{"строго на север", Point{Lat: 55.1, Lon: 37.0}, 0},
+		{"строго на восток", Point{Lat: 55.0, Lon: 37.1}, 90},
+		{"строго на юг", Point{Lat: 54.9, Lon: 37.0}, 180},
+		{"строго на запад", Point{Lat: 55.0, Lon: 36.9}, 270},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := BearingDegrees(origin, c.to)
+			assert.InDelta(t, c.want, got, 0.5, "азимут %v → %v", origin, c.to)
+		})
+	}
+}
+
+// Значение обязано лежать в 0…360 — отрицательный азимут OSRM не примет.
+func TestBearingDegrees_AlwaysInRange(t *testing.T) {
+	origin := Point{Lat: 55.0, Lon: 37.0}
+	for _, to := range []Point{
+		{Lat: 54.9, Lon: 36.9}, // юго-запад: у atan2 здесь отрицательный угол
+		{Lat: 55.1, Lon: 36.9}, // северо-запад
+		{Lat: 54.9, Lon: 37.1}, // юго-восток
+	} {
+		got := BearingDegrees(origin, to)
+		assert.GreaterOrEqual(t, got, 0.0, "%v", to)
+		assert.Less(t, got, 360.0, "%v", to)
+	}
+}
+
+// Обратное направление отличается ровно на 180°.
+//
+// Проверка нужна, потому что подсказка считается по концам дыры, а применяется
+// к обеим точкам: если бы направление «туда» и «обратно» считались по-разному,
+// вторая точка привязывалась бы к встречной стороне.
+func TestBearingDegrees_ReverseIsOpposite(t *testing.T) {
+	a := Point{Lat: 55.42427, Lon: 38.33641} // ЦКАД, тот самый случай
+	b := Point{Lat: 55.40483, Lon: 38.34337}
+
+	ab := BearingDegrees(a, b)
+	ba := BearingDegrees(b, a)
+	diff := math.Abs(ab - ba)
+	if diff > 180 {
+		diff = 360 - diff
+	}
+	assert.InDelta(t, 180.0, diff, 1.0, "туда %.1f°, обратно %.1f°", ab, ba)
+}
+
+// Вырожденный случай: точка сама с собой. Не паникуем и остаёмся в диапазоне.
+func TestBearingDegrees_SamePoint(t *testing.T) {
+	p := Point{Lat: 55.0, Lon: 37.0}
+	got := BearingDegrees(p, p)
+	assert.GreaterOrEqual(t, got, 0.0)
+	assert.Less(t, got, 360.0)
+}

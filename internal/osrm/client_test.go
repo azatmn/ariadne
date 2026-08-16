@@ -798,3 +798,105 @@ func TestSnap_ErrorTextStaysShort(t *testing.T) {
 	assert.Less(t, len(warns[0]), 300,
 		"жалоба на %d символов — в неё уехал адрес целиком: %q", len(warns[0]), warns[0])
 }
+
+// --- подсказка направления на разделённой трассе -----------------------------
+
+// Подсказка уходит в запрос в том виде, какого ждёт OSRM: два одинаковых
+// сектора «азимут,допуск» через точку с запятой — по одному на каждый конец.
+//
+// Формат проверяется буквально, потому что ошибка здесь не падает, а тихо
+// портит результат: сервер молча вернёт маршрут через разворот, и мы решим,
+// что подсказка не помогла.
+func TestRouteGeometryHinted_SendsBearings(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":2200,"duration":120,` +
+			`"geometry":{"coordinates":[[37.60,55.70],[37.61,55.71]]}}],` +
+			`"waypoints":[{"location":[37.601,55.701]},{"location":[37.609,55.709]}]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	r, ok := c.RouteGeometryHinted(context.Background(), pts[0], pts[1], 169)
+
+	require.True(t, ok)
+	assert.Equal(t, 2200.0, r.Distance)
+	assert.Contains(t, gotQuery, "bearings=169,45;169,45",
+		"OSRM ждёт пару секторов, по одному на каждый конец")
+}
+
+// Без подсказки запрос обязан остаться прежним — иначе сломается всё, что
+// работало: на подавляющем большинстве дыр подсказка не нужна вовсе.
+func TestRouteGeometry_SendsNoBearingsByDefault(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":100,"duration":10,` +
+			`"geometry":{"coordinates":[[37.60,55.70],[37.61,55.71]]}}],"waypoints":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	_, ok := c.RouteGeometry(context.Background(), pts[0], pts[1])
+
+	require.True(t, ok)
+	assert.NotContains(t, gotQuery, "bearings",
+		"старый вызов обязан слать прежний запрос")
+}
+
+// Азимут приводится к целому УСЕЧЕНИЕМ: OSRM дробных градусов не принимает, а
+// прототип (эталон сверки) усекает — округли мы иначе, ключ эталонной плёнки
+// не совпал бы и золотой тест искал бы несуществующий ответ.
+func TestRouteGeometryHinted_TruncatesBearing(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":100,"duration":10,` +
+			`"geometry":{"coordinates":[[37.60,55.70],[37.61,55.71]]}}],"waypoints":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	_, _ = c.RouteGeometryHinted(context.Background(), pts[0], pts[1], 168.7)
+
+	assert.Contains(t, gotQuery, "bearings=168,45;168,45", "усечение, как в прототипе")
+	assert.NotContains(t, gotQuery, "168.7", "дробный азимут OSRM отвергает")
+}
+
+// Азимут вне 0…360 приводится к диапазону, а не уезжает в запрос как есть.
+func TestRouteGeometryHinted_NormalizesOutOfRange(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":100,"duration":10,` +
+			`"geometry":{"coordinates":[[37.60,55.70],[37.61,55.71]]}}],"waypoints":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	_, _ = c.RouteGeometryHinted(context.Background(), pts[0], pts[1], 400)
+
+	assert.Contains(t, gotQuery, "bearings=40,45;40,45", "400° — это 40°")
+}
+
+// Отказ сервера на запрос с подсказкой обрабатывается как обычно: вызывающий
+// должен получить false и вернуться к ответу без подсказки, а не упасть.
+func TestRouteGeometryHinted_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"NoSegment"}`))
+	}))
+	defer srv.Close()
+
+	c := newClient(t, srv, nil)
+	pts := track(2)
+	r, ok := c.RouteGeometryHinted(context.Background(), pts[0], pts[1], 90)
+
+	assert.False(t, ok)
+	assert.Nil(t, r)
+}

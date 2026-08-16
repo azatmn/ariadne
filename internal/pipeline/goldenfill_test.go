@@ -95,10 +95,27 @@ type tapeRoutes struct {
 }
 
 func (r *tapeRoutes) RouteGeometry(_ context.Context, a, b geo.Point) (*osrm.Route, bool) {
+	return r.lookup(a, b, "")
+}
+
+// RouteGeometryHinted — тот же ответ с плёнки, но по ключу с подсказкой.
+//
+// Прототип записывает вопросы с подсказкой отдельным ключом (`|b169`), потому
+// что на разделённой трассе ответы с ней и без неё разные: 2.2 км против 25.7.
+// Общий ключ означал бы, что сверка идёт не с тем ответом.
+func (r *tapeRoutes) RouteGeometryHinted(_ context.Context, a, b geo.Point, bearingDeg float64) (*osrm.Route, bool) {
+	deg := int(bearingDeg) % 360
+	if deg < 0 {
+		deg += 360
+	}
+	return r.lookup(a, b, fmt.Sprintf("|b%d", deg))
+}
+
+func (r *tapeRoutes) lookup(a, b geo.Point, suffix string) (*osrm.Route, bool) {
 	r.mu.Lock()
 	r.asked++
 	r.mu.Unlock()
-	key := fmt.Sprintf("%.5f,%.5f;%.5f,%.5f", a.Lon, a.Lat, b.Lon, b.Lat)
+	key := fmt.Sprintf("%.5f,%.5f;%.5f,%.5f", a.Lon, a.Lat, b.Lon, b.Lat) + suffix
 	rec, found := r.g.Tape[key]
 	if !found {
 		r.mu.Lock()

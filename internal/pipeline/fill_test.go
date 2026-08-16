@@ -731,3 +731,136 @@ func TestFill_PanicInEveryWorkerDoesNotHang(t *testing.T) {
 		t.Fatal("стадия зависла: отправитель ждёт в канале, а принимать некому")
 	}
 }
+
+// --- подсказка направления на разделённой трассе -----------------------------
+
+// hintingRoutes — двойник, который ведёт себя как настоящий OSRM на
+// разделённой трассе: без подсказки отдаёт длинный путь через разворот, с
+// подсказкой — короткий и правильный.
+type hintingRoutes struct {
+	mu       sync.Mutex
+	plain    int // сколько раз спросили без подсказки
+	hinted   int // сколько раз спросили с подсказкой
+	bearings []float64
+	// detourPlain, detourHinted — во сколько раз путь длиннее прямой.
+	detourPlain, detourHinted float64
+	// hintedFails — с подсказкой сервер отвечает отказом.
+	hintedFails bool
+}
+
+func (h *hintingRoutes) RouteGeometry(_ context.Context, a, b geo.Point) (*osrm.Route, bool) {
+	h.mu.Lock()
+	h.plain++
+	h.mu.Unlock()
+	return roadRoute(a, b, h.detourPlain, 3, 0), true
+}
+
+func (h *hintingRoutes) RouteGeometryHinted(_ context.Context, a, b geo.Point, bearing float64) (*osrm.Route, bool) {
+	h.mu.Lock()
+	h.hinted++
+	h.bearings = append(h.bearings, bearing)
+	h.mu.Unlock()
+	if h.hintedFails {
+		return nil, false
+	}
+	return roadRoute(a, b, h.detourHinted, 3, 0), true
+}
+
+func (h *hintingRoutes) counts() (plain, hinted int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.plain, h.hinted
+}
+
+// Дыра, отвергнутая как «крюк», переспрашивается с подсказкой направления — и
+// закрывается.
+//
+// Это тот самый случай с карты: точка легла между двумя проезжими частями,
+// маршрутизатор выбрал не ту и повёл до разворота (на ЦКАД 25.7 км вместо 2.2,
+// на М-12 87.9 вместо 22.5). Дорисовка считала это крюком, отказывалась
+// рисовать, и на карте оставалась прямая через поля — хотя машина ехала честно.
+func TestFillGaps_RetriesWithBearingWhenDetourTooBig(t *testing.T) {
+	pts := gapTrack(3000, 600)
+	h := &hintingRoutes{detourPlain: 12, detourHinted: 1.1} // 12× — отказ, 1.1× — норма
+	st := &RunState{}
+	f := FillGaps{Routes: h, State: st}
+
+	out, warns, err := f.Apply(context.Background(), pts)
+	require.NoError(t, err)
+
+	assert.Greater(t, len(out), len(pts), "дыра обязана закрыться после переспроса")
+	plain, hinted := h.counts()
+	assert.Positive(t, plain, "сначала спрашиваем как раньше")
+	assert.Positive(t, hinted, "потом переспрашиваем с подсказкой")
+	assert.Equal(t, 0, st.Fill.Reasons["detour"], "отказа по крюку остаться не должно")
+	_ = warns
+}
+
+// Зеркальный тест: если дорога и так почти повторяет прямую, второго запроса
+// быть НЕ должно.
+//
+// Без этой проверки предыдущий тест проходит и на коде, который переспрашивает
+// всегда: на боевом маршрутизаторе это удвоило бы число запросов, а он общий на
+// все сервисы и держит 75 запросов в секунду.
+func TestFillGaps_NoSecondAskWhenRouteIsFine(t *testing.T) {
+	pts := gapTrack(3000, 600)
+	h := &hintingRoutes{detourPlain: 1.05, detourHinted: 1.0}
+	f := FillGaps{Routes: h, State: &RunState{}}
+
+	_, _, err := f.Apply(context.Background(), pts)
+	require.NoError(t, err)
+
+	plain, hinted := h.counts()
+	assert.Positive(t, plain)
+	assert.Zero(t, hinted, "лишний вопрос маршрутизатору — плата ни за что")
+}
+
+// Подсказка не помогла (машина в дыре разворачивалась, направление по концам
+// посчиталось неверно) — остаётся прежний ответ, и решение прежнее.
+//
+// Главное свойство правки: хуже стать не может.
+func TestFillGaps_KeepsPlainAnswerWhenHintIsWorse(t *testing.T) {
+	pts := gapTrack(3000, 600)
+	h := &hintingRoutes{detourPlain: 12, detourHinted: 40} // с подсказкой ещё хуже
+	st := &RunState{}
+	f := FillGaps{Routes: h, State: st}
+
+	out, _, err := f.Apply(context.Background(), pts)
+	require.NoError(t, err)
+
+	assert.Equal(t, len(pts), len(out), "оба пути негодны — дыра остаётся прямой")
+	assert.Equal(t, 1, st.Fill.Reasons["detour"], "причина отказа прежняя")
+}
+
+// Сервер отказал на запрос с подсказкой — берём то, что было. Не падаем и не
+// теряем дыру молча.
+func TestFillGaps_SurvivesHintedRequestFailure(t *testing.T) {
+	pts := gapTrack(3000, 600)
+	h := &hintingRoutes{detourPlain: 12, detourHinted: 1.1, hintedFails: true}
+	st := &RunState{}
+	f := FillGaps{Routes: h, State: st}
+
+	out, _, err := f.Apply(context.Background(), pts)
+	require.NoError(t, err)
+
+	assert.Equal(t, len(pts), len(out))
+	assert.Equal(t, 1, st.Fill.Reasons["detour"])
+}
+
+// Подсказка считается по направлению самой дыры, а не по чему попало.
+func TestFillGaps_BearingMatchesGapDirection(t *testing.T) {
+	pts := gapTrack(3000, 600)
+	h := &hintingRoutes{detourPlain: 12, detourHinted: 1.1}
+	f := FillGaps{Routes: h, State: &RunState{}}
+
+	_, _, err := f.Apply(context.Background(), pts)
+	require.NoError(t, err)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	require.NotEmpty(t, h.bearings)
+	for _, b := range h.bearings {
+		assert.GreaterOrEqual(t, b, 0.0)
+		assert.Less(t, b, 360.0)
+	}
+}
