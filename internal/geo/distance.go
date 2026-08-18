@@ -2,9 +2,14 @@ package geo
 
 import "math"
 
-// Средний радиус Земли по IUGG (R1), метры
+// earthRadius — средний радиус Земли по IUGG (R1), метры.
 const earthRadius = 6_371_008.8
 
+// Haversine — расстояние между точками по дуге большого круга, метры.
+//
+// Формула гаверсинуса, а не теорема косинусов: последняя на близких точках
+// теряет знаки в float64, а точки трека приходят раз в несколько секунд и
+// отстоят на десятки метров.
 func Haversine(a, b Point) float64 {
 	lat1 := a.Lat * math.Pi / 180
 	lat2 := b.Lat * math.Pi / 180
@@ -20,6 +25,12 @@ func Haversine(a, b Point) float64 {
 
 // CrossTrackDistance — перпендикулярное расстояние (в метрах) от точки p
 // до дуги большого круга между a и b.
+//
+// Нужно упрощению трека: точка, отстоящая от прямой между соседями меньше
+// чем на порог, ничего к форме маршрута не добавляет и выбрасывается.
+//
+// Дуга считается бесконечной: если проекция p падает за пределы отрезка ab,
+// вернётся расстояние до продолжения дуги, а не до ближайшего конца.
 func CrossTrackDistance(p, a, b Point) float64 {
 	distAP := Haversine(a, p) / earthRadius
 	bearAB := bearing(a, b)
@@ -44,6 +55,8 @@ func BearingDegrees(a, b Point) float64 {
 	return math.Mod(deg+360, 360)
 }
 
+// bearing — начальный азимут из a в b, радианы от −π до π против севера.
+// Внутренний: наружу отдаётся BearingDegrees, у него удобный диапазон.
 func bearing(a, b Point) float64 {
 	lat1 := a.Lat * math.Pi / 180
 	lat2 := b.Lat * math.Pi / 180
@@ -54,6 +67,9 @@ func bearing(a, b Point) float64 {
 	return math.Atan2(y, x)
 }
 
+// TotalLength — длина ломаной по точкам, метры. Это и есть километраж,
+// который сервис возвращает заказчику: сумма расстояний между соседями.
+// Порядок точек берётся как есть — сортировать по времени должен вызывающий.
 func TotalLength(points []Point) float64 {
 	var total float64
 	for i := 1; i < len(points); i++ {
