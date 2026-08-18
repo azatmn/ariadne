@@ -21,6 +21,8 @@ type Handler struct {
 	store *taskstore.Store
 }
 
+// NewHandler собирает хендлер задач. Кроме хранилища ему ничего не нужно:
+// ни конфига, ни конвейера — всё это дело воркера.
 func NewHandler(store *taskstore.Store) *Handler {
 	return &Handler{store: store}
 }

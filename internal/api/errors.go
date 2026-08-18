@@ -7,7 +7,8 @@ import (
 	"ariadne/internal/logger"
 )
 
-// Машиночитаемые коды ошибок (по ТЗ).
+// Машиночитаемые коды ошибок (по ТЗ). Публичный API: backend разбирает их
+// строками, менять и переименовывать нельзя.
 const (
 	CodeInvalidRequest     = "INVALID_REQUEST"
 	CodeInvalidRouteFormat = "INVALID_ROUTE_FORMAT"
@@ -31,6 +32,9 @@ type ErrorPayload struct {
 	Error ErrorBody `json:"error"`
 }
 
+// ErrorBody — содержимое поля error. Code машиночитаемый и стабильный:
+// по нему backend принимает решение, а Message только для человека и может
+// меняться без предупреждения.
 type ErrorBody struct {
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
@@ -46,12 +50,19 @@ var codeToStatus = map[string]int{
 	CodeInternal:           http.StatusInternalServerError,
 }
 
+// AppError — ошибка хендлера, знающая свой код ответа.
+//
+// Message уходит клиенту, Err остаётся в логе. Разделение намеренное:
+// внутренний текст может содержать адрес Redis, кусок чужого трека или
+// строку запроса — наружу такому нельзя.
 type AppError struct {
 	Code    string
 	Message string
 	Err     error
 }
 
+// Error отдаёт текст обёрнутой ошибки, а при её отсутствии — Message.
+// Так *AppError годится и для errors.Is/As по исходной причине.
 func (e *AppError) Error() string {
 	if e.Err != nil {
 		return e.Err.Error()
@@ -59,6 +70,11 @@ func (e *AppError) Error() string {
 	return e.Message
 }
 
+// WriteError пишет ошибку в ответ: код HTTP по таблице codeToStatus, тело —
+// ErrorPayload.
+//
+// Незнакомый код превращается в 500, а не в панику: соврать про причину хуже,
+// чем промолчать, но уронить запрос — хуже обоих.
 func WriteError(w http.ResponseWriter, r *http.Request, code, message string) {
 	status, ok := codeToStatus[code]
 	if !ok {
