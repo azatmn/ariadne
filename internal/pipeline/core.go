@@ -162,6 +162,9 @@ func RoadFrom(c pairSource) core.RoadClient { return roadAdapter{c} }
 
 type roadAdapter struct{ inner pairSource }
 
+// PairDistance перекладывает пары из типов ядра в типы клиента и спрашивает
+// расстояния по дорогам. Пустой список наружу не уходит: запрос без пар — это
+// лишний поход по сети за пустым ответом.
 func (r roadAdapter) PairDistance(ctx context.Context, pairs []core.Pair) ([]float64, []bool, []string) {
 	if len(pairs) == 0 {
 		return nil, nil, nil
