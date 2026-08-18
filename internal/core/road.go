@@ -106,6 +106,11 @@ type RoadState struct {
 	loops map[askedID]struct{}
 }
 
+// NewRoadState заводит блокнот дорожных проверок на ОДИН прогон.
+//
+// Все четыре карты создаются сразу: запись в nil-карту паникует, а заполняются
+// они из разных мест ядра, и проверять каждое на «а создана ли» — лишний повод
+// однажды забыть.
 func NewRoadState() *RoadState {
 	return &RoadState{
 		Banned:  make(map[BanID]float64),

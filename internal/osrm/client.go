@@ -176,6 +176,9 @@ type httpError struct {
 	Body string
 }
 
+// Error — текст с кодом и телом ответа. Тело оставлено целиком намеренно:
+// OSRM пишет в него причину («NoRoute», «TooBig»), и без неё по одному коду
+// не разобрать, что случилось.
 func (e *httpError) Error() string {
 	return fmt.Sprintf("osrm: http %d: %s", e.Code, e.Body)
 }
