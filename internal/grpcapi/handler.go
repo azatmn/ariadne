@@ -17,6 +17,11 @@ import (
 // чтобы отмена клиента их прерывала.
 const storeTimeout = 5 * time.Second
 
+// Handler — gRPC-реализация RouteService: те же приём задачи и опрос статуса,
+// что и по HTTP, поверх того же хранилища.
+//
+// UnimplementedRouteServiceServer встроен, как требует protobuf: он даёт
+// заглушки будущим методам, и добавление метода в .proto не ломает сборку.
 type Handler struct {
 	ariadnepb.UnimplementedRouteServiceServer
 	store *taskstore.Store

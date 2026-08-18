@@ -11,6 +11,15 @@ import (
 	ariadnepb "ariadne/internal/gen/ariadne"
 )
 
+// NewServer собирает gRPC-сервер с перехватчиками.
+//
+// Порядок в цепочке важен и обратный привычному: первым идёт Recover, чтобы
+// накрыть собой остальные, следом RequestID — иначе Logger и запись о панике
+// вышли бы без идентификатора вызова.
+//
+// enableReflection включает отражение, по которому grpcurl и Postman видят
+// список методов. В бою держится выключенным: наружу не стоит объявлять то,
+// что у тебя есть.
 func NewServer(h *Handler, logger *slog.Logger, maxRecvMsgSize int, enableReflection bool) *grpc.Server {
 	srv := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),

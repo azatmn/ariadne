@@ -18,11 +18,18 @@ import (
 	"ariadne/internal/service"
 )
 
+// ResolveRequest — тело POST /v1/routes/resolve-collisions. returnDebug
+// просит вернуть разбор по стадиям: отладчику он нужен всегда, но гонять его
+// по умолчанию незачем — статистика заметно раздувает ответ.
 type ResolveRequest struct {
 	RouteCompressed string `json:"routeCompressed"`
 	ReturnDebug     bool   `json:"returnDebug,omitempty"`
 }
 
+// ResolveResponse — очищенный маршрут и всё, что о нём известно.
+//
+// В отличие от async-ответа тут есть lengthBeforeMeters и removedPointsCount:
+// отладчик рисует до и после рядом, и ему нужны обе стороны сравнения.
 type ResolveResponse struct {
 	RouteCompressed    string                `json:"routeCompressed"`
 	LengthMeters       float64               `json:"lengthMeters"`
@@ -33,12 +40,15 @@ type ResolveResponse struct {
 	Debug              []pipeline.StageStats `json:"debug,omitempty"`
 }
 
+// Handler — синхронная ручка чистки. Держит собственный таймаут: у async-пути
+// бюджет отсчитывает воркер, а здесь ограничивать прогон некому.
 type Handler struct {
 	svc            *service.Service
 	limits         codec.Limits
 	resolveTimeout time.Duration
 }
 
+// NewHandler собирает синхронный хендлер.
 func NewHandler(svc *service.Service, limits codec.Limits, resolveTimeout time.Duration) *Handler {
 	return &Handler{svc: svc, limits: limits, resolveTimeout: resolveTimeout}
 }
