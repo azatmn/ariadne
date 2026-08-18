@@ -51,6 +51,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "string"
                         }
+                    },
+                    "503": {
+                        "description": "shutting down | queue is not being processed",
+                        "schema": {
+                            "type": "string"
+                        }
                     }
                 }
             }
