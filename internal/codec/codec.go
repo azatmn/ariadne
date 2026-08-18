@@ -1,3 +1,12 @@
+// Package codec переводит маршрут между форматом провода и внутренним видом:
+// base64 → zlib → JSON → []geo.Point и обратно.
+//
+// Формат задан PHP-бэкендом, и в нём заложена ловушка: gzcompress() в PHP даёт
+// zlib (заголовок 0x78), а НЕ gzip. compress/gzip на таких данных отвечает
+// «Not a gzipped file».
+//
+// Вход приходит снаружи и по определению враждебен, поэтому распаковка идёт
+// под двумя потолками сразу — см. Limits.
 package codec
 
 import (
@@ -15,6 +24,8 @@ import (
 )
 
 var (
+	// ErrDecompressedTooLarge — распакованные данные не влезли в потолок байт.
+	// Отдаётся вместо EOF, чтобы отличить бомбу сжатия от битого входа.
 	ErrDecompressedTooLarge = errors.New("codec: decompressed data too large")
 
 	// ErrTooManyPoints — во входе больше точек, чем разрешено.
@@ -48,6 +59,7 @@ type capReader struct {
 	left int64
 }
 
+// Read отдаёт данные, пока не исчерпан остаток; после этого — свою ошибку.
 func (c *capReader) Read(p []byte) (int, error) {
 	if c.left <= 0 {
 		return 0, ErrDecompressedTooLarge
@@ -178,6 +190,11 @@ func decodeErr(err error) error {
 	return fmt.Errorf("codec: json unmarshal: %w", err)
 }
 
+// Encode собирает маршрут обратно в строку для ответа: JSON → zlib → base64.
+//
+// Время пишется в RFC3339 — в том же виде, в каком пришло. Сжатие на
+// максимальном уровне: ответ уходит по сети один раз, а процессорного времени
+// на нём тратится несравнимо меньше, чем в самой чистке.
 func Encode(points []geo.Point) (string, error) {
 	wire := make([]wirePoint, len(points))
 	for i, p := range points {
