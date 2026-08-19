@@ -2,14 +2,18 @@ package worker
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
@@ -1085,4 +1089,82 @@ func TestPool_IdleQueueIsNotBroken(t *testing.T) {
 	time.Sleep(300 * time.Millisecond) // втрое дольше порога
 	assert.False(t, pool.QueueBroken(),
 		"пустая очередь — обычное дело, это не отказ")
+}
+
+// ---- обрезка текста ошибки перед записью в Redis ----
+
+// hugeTimeInput — вход, где поле `t` у точки раздуто до size байт.
+//
+// Это настоящий путь атаки, а не выдуманный: codec подставляет `t` в текст
+// ошибки как есть (`parse time %q`), и длину строки задаёт отправитель.
+func hugeTimeInput(t *testing.T, size int) string {
+	t.Helper()
+	raw := `[{"t":"` + strings.Repeat("A", size) + `","pos":{"x":37.6,"y":55.75}}]`
+
+	var buf bytes.Buffer
+	zw := zlib.NewWriter(&buf)
+	_, err := zw.Write([]byte(raw))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// Раздутое поле `t` не должно превращаться в мегабайты в Redis.
+func TestProcess_HugeTimeField_ErrorTruncated(t *testing.T) {
+	store := newTestStore(t)
+	pool := newPool(t, store, service.New(testConfig(), nil), 10*time.Second)
+	saveTask(t, store, "huge", hugeTimeInput(t, 5<<20))
+
+	pool.process(taskstore.Claim{TaskKey: "huge"})
+
+	got, err := store.Get(context.Background(), "huge")
+	require.NoError(t, err)
+	assert.Equal(t, taskstore.StatusFailed, got.Status)
+	assert.LessOrEqual(t, len(got.Error), maxErrorBytes,
+		"текст ошибки уехал в Redis без обрезки")
+	assert.Contains(t, got.Error, "decode", "причина должна остаться видна")
+}
+
+// Любая длинная ошибка обрезается, откуда бы она ни пришла.
+func TestProcess_LongResolveError_Truncated(t *testing.T) {
+	store := newTestStore(t)
+	long := errors.New(strings.Repeat("ы", 200_000)) // кириллица: 2 байта на букву
+	pool := newPool(t, store, fakeResolver{err: long}, 10*time.Second)
+	saveTask(t, store, "long", validInput(t))
+
+	pool.process(taskstore.Claim{TaskKey: "long"})
+
+	got, err := store.Get(context.Background(), "long")
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(got.Error), maxErrorBytes)
+	assert.True(t, utf8.ValidString(got.Error),
+		"обрезали посреди буквы — получилась битая UTF-8-строка")
+}
+
+// Зеркальная проверка: короткую ошибку не трогаем вовсе.
+//
+// Без неё «обрезать всегда» и «обрезать по делу» дают одинаково зелёные тесты.
+func TestProcess_ShortError_LeftIntact(t *testing.T) {
+	store := newTestStore(t)
+	pool := newPool(t, store, fakeResolver{err: errors.New("kaboom")}, 10*time.Second)
+	saveTask(t, store, "short", validInput(t))
+
+	pool.process(taskstore.Claim{TaskKey: "short"})
+
+	got, err := store.Get(context.Background(), "short")
+	require.NoError(t, err)
+	assert.Equal(t, "resolve: kaboom", got.Error)
+	assert.NotContains(t, got.Error, truncatedMark)
+}
+
+// Обрезка не должна съедать начало: причина стоит в первых байтах.
+func TestClampError_KeepsHeadAndMarks(t *testing.T) {
+	in := "decode: parse time " + strings.Repeat("A", maxErrorBytes*2)
+
+	out := clampError(in)
+
+	assert.LessOrEqual(t, len(out), maxErrorBytes)
+	assert.True(t, strings.HasPrefix(out, "decode: parse time A"))
+	assert.True(t, strings.HasSuffix(out, truncatedMark),
+		"обрезанный текст обязан честно об этом сообщать")
 }

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"ariadne/internal/codec"
 	"ariadne/internal/geo"
@@ -437,9 +438,10 @@ func (p *Pool) process(claim taskstore.Claim) {
 	procCancel()
 
 	if fillErr != nil {
+		reason := clampError(fillErr.Error())
 		card.Status = taskstore.StatusFailed
-		card.Error = fillErr.Error()
-		log.Warn("task failed", "error", fillErr)
+		card.Error = reason
+		log.Warn("task failed", "error", reason)
 	} else {
 		card.Status = taskstore.StatusDone
 	}
@@ -517,4 +519,48 @@ func (p *Pool) fill(ctx context.Context, card *taskstore.Task) error {
 	card.Degraded = res.Degraded
 	card.Warnings = res.Warnings
 	return nil
+}
+
+// maxErrorBytes — потолок на текст ошибки, который уезжает в карточку задачи.
+//
+// Ошибка разбора подставляет в себя кусок ПРИСЛАННОГО входа: codec печатает
+// негодную метку времени как `parse time %q`, а сколько в ней букв, решает
+// отправитель. Мало того, сама time.Parse кладёт разобранное значение в текст
+// дважды, и наша обёртка добавляет третью копию.
+//
+// Замер на этом самом месте: поле `t` в пять мегабайт дало 15 728 754 байта
+// текста ошибки. Он ложился в Redis, то есть в оперативную память, и лежал
+// там до истечения карточки. Сжатый такой запрос весит около тринадцати
+// килобайт — прислать его ничего не стоит.
+//
+// Килобайта хватает: причина стоит в начале строки, а чужая простыня за ней
+// ничего не объясняет.
+const maxErrorBytes = 1024
+
+// truncatedMark — метка обрезки. Без неё читающий не отличит «ошибка такая»
+// от «ошибка длиннее, продолжение мы съели».
+const truncatedMark = " … (truncated)"
+
+// clampError укорачивает текст ошибки до maxErrorBytes, сохраняя начало.
+//
+// Начало, а не конец: причину пишут первой («decode: …», «resolve: …»), и
+// именно по ней разбирают отказ.
+func clampError(msg string) string {
+	if len(msg) <= maxErrorBytes {
+		return msg
+	}
+	head := msg[:maxErrorBytes-len(truncatedMark)]
+
+	// Потолок задан в БАЙТАХ, а кириллическая буква занимает два, эмодзи —
+	// четыре. Обрезав вслепую, можно оставить половину буквы: получится
+	// битая UTF-8-строка, и на ней споткнётся JSON-кодировщик ответа.
+	// Отступаем назад, пока хвост не станет целой руной.
+	for len(head) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(head); r == utf8.RuneError && size <= 1 {
+			head = head[:len(head)-1]
+			continue
+		}
+		break
+	}
+	return head + truncatedMark
 }
