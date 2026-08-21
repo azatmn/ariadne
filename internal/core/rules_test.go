@@ -62,6 +62,9 @@ func TestFindTraps_SlowCircleIsNotTrap(t *testing.T) {
 	assert.Empty(t, FindTraps(pts), "на малой скорости кружение законно")
 }
 
+// Окно ловушки требует нескольких точек. На более коротком входе правило
+// обязано молча ничего не найти, а не выйти за границы среза: такие треки
+// приходят с трекера, который только включили.
 func TestFindTraps_TooFewPoints(t *testing.T) {
 	for _, n := range []int{0, 1, 2, 3, 4} {
 		assert.NotPanics(t, func() { FindTraps(trap(n, 7, 0.0018, 10, 0, 0)) })
@@ -77,6 +80,9 @@ func TestFindTraps_ZeroTimeSteps(t *testing.T) {
 	assert.NotPanics(t, func() { FindTraps(pts) })
 }
 
+// Правило возвращает НОМЕРА точек, и по ним вызывающий ставит штрафы.
+// Номер за пределами трека либо уронит ядро, либо — что хуже — оштрафует
+// чужую точку, и разобраться в этом по результату будет нельзя.
 func TestFindTraps_ReturnsIndicesWithinRange(t *testing.T) {
 	pts := trap(200, 7, 0.0018, 10.0, 0.0, 0)
 	for i := range FindTraps(pts) {
@@ -121,6 +127,9 @@ func TestFindIslands_LongStayIsNotOrphan(t *testing.T) {
 	assert.Empty(t, FindIslands(pts), "долгое стояние — не огрызок")
 }
 
+// Третья мерка по отдельности: точек много, хотя времени прошло мало и
+// внутри не ездили. Одной уцелевшей мерки достаточно — иначе плотная пачка
+// с настоящей погрузки уехала бы в мусор.
 func TestFindIslands_ManyPointsIsNotOrphan(t *testing.T) {
 	var pts []geo.Point
 	pts = append(pts, drive(20, 60, 10.0, 0.0, 0.005, 0)...)
@@ -144,6 +153,8 @@ func TestFindIslands_IslandInTheMiddle(t *testing.T) {
 	}
 }
 
+// Зеркальная проверка ко всем предыдущим: без разрывов резать нечего.
+// Без неё правило, объявляющее огрызком что попало, прошло бы тесты.
 func TestFindIslands_ContinuousTrackHasNoIslands(t *testing.T) {
 	pts := drive(100, 60, 10.0, 0.0, 0.005, 0) // шаг 556 м, разрывов нет
 	assert.Empty(t, FindIslands(pts))
@@ -206,6 +217,9 @@ func TestRules_DoNotModifyInput(t *testing.T) {
 	assert.Equal(t, before, pts)
 }
 
+// Оба замера — на потолке входа (50 000 точек). Правила зовутся на каждом
+// проходе ядра, а проходов бывает до дюжины: лишний множитель здесь съедает
+// бюджет задачи целиком.
 func BenchmarkFindTraps(b *testing.B) {
 	pts := drive(50000, 5, 10.0, 0.0, 0.0005, 0)
 	b.ReportAllocs()
@@ -221,8 +235,6 @@ func BenchmarkFindIslands(b *testing.B) {
 		FindIslands(pts)
 	}
 }
-
-var _ = time.Second
 
 // ------------------------------------------------- защита от негодного входа
 //
@@ -290,6 +302,8 @@ func TestFindDual_JumpBetweenIdenticalPlaces(t *testing.T) {
 	assert.Empty(t, FindDual(pts))
 }
 
+// Пустой вход — рабочий случай, а не ошибка: медиану зовут на окне, которое
+// у края трека может не собрать ни одного соседа.
 func TestMedianInPlace_Empty(t *testing.T) {
 	assert.Zero(t, medianInPlace(nil))
 	assert.Zero(t, medianInPlace([]float64{}))

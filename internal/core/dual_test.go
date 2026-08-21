@@ -117,6 +117,9 @@ func TestFindDual_TooFewSwitches(t *testing.T) {
 	assert.Empty(t, FindDual(pts))
 }
 
+// Порог DualMinPoints = 20: на коротком треке эпизодов не ищем вовсе.
+// Два места и десяток прыжков между ними на такой длине — это не «два
+// источника», а обычный городской заезд с плохим приёмом.
 func TestFindDual_TooShortTrack(t *testing.T) {
 	for _, n := range []int{0, 1, 5, 19} {
 		assert.Empty(t, FindDual(drive(n, 30, 10, 0, 0.002, 0)))
@@ -169,6 +172,8 @@ func TestFindDual_ManyPlacesWithNoLeaderKillsEpisode(t *testing.T) {
 		"при отсутствии лидера выбрасывается весь период")
 }
 
+// Правило возвращает номера точек проигравшего потока, и по ним ядро ставит
+// штрафы. Номер за пределами трека оштрафовал бы чужую точку молча.
 func TestFindDual_ReturnsValidIndices(t *testing.T) {
 	pts := weave(town, poset, 20, 2, 30, 8)
 	for i := range FindDual(pts) {
@@ -177,6 +182,9 @@ func TestFindDual_ReturnsValidIndices(t *testing.T) {
 	}
 }
 
+// Правило внутри группирует прыжки и считает покрытие по времени — соблазн
+// отсортировать точки на месте велик. Вход общий со всеми остальными
+// правилами прохода, и порча тут разъехалась бы по всему ядру.
 func TestFindDual_DoesNotModifyInput(t *testing.T) {
 	pts := weave(town, poset, 20, 2, 30, 8)
 	before := make([]geo.Point, len(pts))
@@ -199,6 +207,9 @@ func TestFindDual_ZeroTimeJumps(t *testing.T) {
 	assert.NotPanics(t, func() { FindDual(pts) })
 }
 
+// Семнадцать тысяч точек — порядок настоящего `ab681145`, на котором правило
+// и появилось. Внутри группировка эпизодов и попарные сравнения мест: место
+// как раз для случайной квадратичности.
 func BenchmarkFindDual(b *testing.B) {
 	pts := weave(town, poset, 20, 2, 30, 400) // ~17 тысяч точек
 	b.ReportAllocs()

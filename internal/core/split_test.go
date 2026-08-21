@@ -48,11 +48,18 @@ var (
 
 // ------------------------------------------------------------- FindSplit
 
+// Главная зеркальная проверка правила. Пятьсот точек ровной езды: мест,
+// соперничающих за одно время, тут нет ни одного, и раздвоение обязано быть
+// пустым. Правило, объявляющее раздвоением всякий перегон, съело бы трек
+// целиком — а найти виноватого оно и на таком входе «сумеет».
 func TestFindSplit_HonestTrackIsClean(t *testing.T) {
 	pts := drive(500, 30, 10.0, 0.0, 0.002, 0)
 	assert.Empty(t, FindSplit(pts), "монотонная езда раздвоением не является")
 }
 
+// Порог по длине: на треке короче двадцати точек слотов не набрать, и
+// «несколько мест за один промежуток» превращается в обычный разброс
+// приёмника у светофора.
 func TestFindSplit_TooShortTrack(t *testing.T) {
 	for _, n := range []int{0, 1, 10, 19} {
 		assert.Empty(t, FindSplit(drive(n, 30, 10, 0, 0.002, 0)))
@@ -182,6 +189,9 @@ func TestFindSplit_NearbyPlacesAreNotSplit(t *testing.T) {
 	assert.Empty(t, FindSplit(pts), "места ближе трёх километров не считаются разными")
 }
 
+// Номера уходят в штрафы. Здесь их особенно легко испортить: правило
+// работает через кластеры, и наружу отдаются индексы ИСХОДНОГО трека, а не
+// позиции внутри кластера.
 func TestFindSplit_ReturnsValidIndices(t *testing.T) {
 	pts := rotate([]spot{spotA, spotB, spotC}, 8, 30, 30)
 	for i := range FindSplit(pts) {
@@ -190,6 +200,8 @@ func TestFindSplit_ReturnsValidIndices(t *testing.T) {
 	}
 }
 
+// Внутри правило раскладывает точки по кластерам и считает доли слотов.
+// Кластеризация — первое место, где хочется отсортировать вход на месте.
 func TestFindSplit_DoesNotModifyInput(t *testing.T) {
 	pts := rotate([]spot{spotA, spotB, spotC}, 8, 30, 30)
 	before := make([]geo.Point, len(pts))
@@ -214,6 +226,9 @@ func TestFindSplit_SameTimestampBatch(t *testing.T) {
 
 // --------------------------------------------------- внутренние помощники
 
+// Кластеризация по отдельности: четыре точки, попарно близкие, обязаны дать
+// РОВНО два места по два. Разъехавшись здесь, правило дальше сравнивает
+// покрытие несуществующих мест — и виноватого назначает наугад.
 func TestSplitClusters_AssignsToNearestCentre(t *testing.T) {
 	pts := []geo.Point{
 		at(0, 10.0, 0.0),
@@ -227,6 +242,8 @@ func TestSplitClusters_AssignsToNearestCentre(t *testing.T) {
 	assert.Len(t, cs[1].idx, 2)
 }
 
+// Пустой вход. Кластеризацию зовут из середины правила, где список
+// подозреваемых уже отфильтрован и вполне может оказаться пустым.
 func TestSplitClusters_Empty(t *testing.T) {
 	assert.Empty(t, splitClusters(nil, nil, SplitNearM))
 }
@@ -266,6 +283,13 @@ func TestSplitReturns_CountsOnlyComebacks(t *testing.T) {
 	assert.Zero(t, cnt, "проезд вперёд возвратов не содержит")
 }
 
+// Возвраты по отдельности: сигнал мечется между двумя местами шесть раз.
+// Считается именно ВОЗВРАЩЕНИЕ в уже покинутое место, а не всякий переход, —
+// иначе обычная езда по кругу дала бы тот же счёт.
+//
+// Проверяются обе стороны ответа: и сколько возвратов насчитали, и что
+// замешанными признаны ОБА места. Одного числа мало — правило могло бы
+// насчитать возвраты и обвинить в них одно место из двух.
 func TestSplitReturns_CountsRealComebacks(t *testing.T) {
 	pts := []geo.Point{
 		at(0, 10.00, 0), at(10, 10.07, 0),
@@ -279,6 +303,9 @@ func TestSplitReturns_CountsRealComebacks(t *testing.T) {
 	assert.Len(t, guilty, 2, "замешаны оба места")
 }
 
+// Пять тысяч точек: три места по очереди, двести кругов. Внутри
+// кластеризация и попарное сравнение покрытий — стоимость растёт быстрее
+// длины трека, и следить за этим надо на глазок по замеру.
 func BenchmarkFindSplit(b *testing.B) {
 	pts := rotate([]spot{spotA, spotB, spotC}, 8, 30, 200) // ~4800 точек
 	b.ReportAllocs()

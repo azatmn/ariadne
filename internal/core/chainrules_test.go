@@ -13,6 +13,16 @@ import (
 //
 // До её построения их не проверить: в сыром треке между будущими соседями лежат
 // точки, которые чистка потом выбросит, и разрывов ещё нет.
+//
+// У каждого правила здесь две обязательные проверки помимо основной:
+//
+//   - `*_ShortChain` — цепочка короче, чем правилу нужно соседей. Все четыре
+//     правила ходят по цепочке окнами и берут соседа по индексу; на пустой
+//     цепочке и на цепочке из одной-двух точек это выход за границы среза.
+//     Случай настоящий: после жёсткой чистки в цепочке остаётся две точки.
+//   - `*_Clean` / `*_IsClean` — на честной езде правило обязано молчать. Без
+//     этой половины правило, штрафующее всё подряд, прошло бы тесты: основная
+//     проверка смотрит только на то, что виновного нашли.
 
 func penaltyOf(p map[int]float64, idx ...int) float64 {
 	var sum float64
@@ -113,6 +123,7 @@ func TestCheckStubs_EdgeStubIsCaught(t *testing.T) {
 	assert.Positive(t, penaltyOf(pen, 2, 3))
 }
 
+// Огрызок ищется между двумя разрывами — нужны минимум три точки.
 func TestCheckStubs_ShortChain(t *testing.T) {
 	pts := drive(5, 60, 10.0, 0.0, 0.01, 0)
 	for _, chain := range [][]int{nil, {0}, {0, 1}} {
@@ -120,6 +131,9 @@ func TestCheckStubs_ShortChain(t *testing.T) {
 	}
 }
 
+// Зеркало: без разрывов заезжать некуда, штрафов быть не должно ни одного.
+// Проверяется и возврат, и сама карта штрафов — правило могло бы вернуть
+// ноль, но по дороге кого-нибудь оштрафовать.
 func TestCheckStubs_ContinuousTrackHasNoStubs(t *testing.T) {
 	pts := drive(50, 60, 10.0, 0.0, 0.005, 0) // шаг 556 м, разрывов нет
 	pen := map[int]float64{}
@@ -151,6 +165,8 @@ func TestCheckLateral_CatchesImpossibleTurn(t *testing.T) {
 	assert.NotEmpty(t, pen)
 }
 
+// Зеркало к CatchesImpossibleTurn: 96 км/ч по прямой — самый обычный ход по
+// трассе, и боковой перегрузки в нём нет никакой.
 func TestCheckLateral_StraightRoadIsClean(t *testing.T) {
 	pts := drive(30, 5, 10.0, 0.0, 0.0012, 0) // ~96 км/ч по прямой
 	pen := map[int]float64{}
@@ -198,6 +214,7 @@ func TestCheckLateral_SameTimestampBatchIsIgnored(t *testing.T) {
 		"нулевое время на плече — не повод считать вираж")
 }
 
+// Поворот считается по трём точкам подряд — на двух его не существует.
 func TestCheckLateral_ShortChain(t *testing.T) {
 	pts := drive(5, 5, 10.0, 0.0, 0.001, 0)
 	for _, chain := range [][]int{nil, {0}, {0, 1}} {
@@ -259,6 +276,7 @@ func TestCheckSpeedWin_PenalisesWholeWindow(t *testing.T) {
 	assert.Greater(t, len(pen), 5, "наказывается окно целиком, а не одна точка")
 }
 
+// Окно набирается по времени; на двух точках набирать нечего.
 func TestCheckSpeedWin_ShortChain(t *testing.T) {
 	pts := drive(5, 10, 10.0, 0.0, 0.001, 0)
 	for _, chain := range [][]int{nil, {0}, {0, 1}} {
@@ -296,6 +314,8 @@ func TestCheckLonely_CatchesPointInPause(t *testing.T) {
 	assert.Zero(t, penaltyOf(pen, 0, 1, 3, 4), "соседей не трогаем")
 }
 
+// Зеркало к CatchesPointInPause: при ровной езде пауз нет вовсе, а значит
+// нет и одиноких точек внутри них.
 func TestCheckLonely_NormalDrivingIsClean(t *testing.T) {
 	pts := drive(50, 60, 10.0, 0.0, 0.01, 0)
 	pen := map[int]float64{}
@@ -340,6 +360,8 @@ func TestCheckLonely_TooCloseIsJitter(t *testing.T) {
 	assert.Zero(t, CheckLonely(pts, []int{0, 1, 2}, pen))
 }
 
+// Одиночество меряется по обоим соседям — нужны точки слева И справа,
+// то есть цепочка хотя бы из четырёх.
 func TestCheckLonely_ShortChain(t *testing.T) {
 	pts := drive(5, 60, 10.0, 0.0, 0.01, 0)
 	for _, chain := range [][]int{nil, {0}, {0, 1}, {0, 1, 2}} {
@@ -349,6 +371,12 @@ func TestCheckLonely_ShortChain(t *testing.T) {
 
 // ------------------------------------------------------------ общее
 
+// Четыре правила зовутся ПОДРЯД по одним и тем же точкам и одной цепочке.
+// Испортив вход, первое правило молча изменило бы условия для трёх следующих,
+// и разобраться в этом по результату чистки было бы невозможно.
+//
+// Цепочка проверяется отдельно от точек: её правила получают срезом и могли
+// бы переставить элементы на месте.
 func TestChainRules_DoNotModifyInput(t *testing.T) {
 	pts := drive(60, 30, 10.0, 0.0, 0.003, 0)
 	before := make([]geo.Point, len(pts))
@@ -365,6 +393,9 @@ func TestChainRules_DoNotModifyInput(t *testing.T) {
 	require.Equal(t, chainOf(len(pts)), chain, "цепочка тоже не меняется")
 }
 
+// Все четыре правила разом — так их и зовёт ядро. Карта штрафов заводится
+// внутри цикла намеренно: её заполнение входит в стоимость прохода, а
+// проходов у ядра бывает до дюжины.
 func BenchmarkChainRules(b *testing.B) {
 	pts := drive(20000, 30, 10.0, 0.0, 0.002, 0)
 	chain := chainOf(len(pts))

@@ -3,7 +3,6 @@ package core
 import (
 	"math"
 	"testing"
-	"time"
 
 	"ariadne/internal/geo"
 	"github.com/stretchr/testify/assert"
@@ -23,6 +22,8 @@ func TestMedian_EvenLengthAveragesMiddleTwo(t *testing.T) {
 	assert.Equal(t, 3.0, median([]float64{1, 2, 4, 8}))
 }
 
+// Вырожденные входы. Ноль на пустом — не «нет данных», а рабочее значение:
+// SigmaOf на нём откатывается к базовой сигме, и падать тут нечему.
 func TestMedian_SingleAndEmpty(t *testing.T) {
 	assert.Equal(t, 7.0, median([]float64{7}))
 	assert.Equal(t, 0.0, median(nil))
@@ -71,12 +72,17 @@ func TestSigmaOf_IgnoresUnanswered(t *testing.T) {
 	assert.InDelta(t, 40.0, SigmaOf(snaps, ok), 1e-9)
 }
 
+// Списки снэпов и ответов приходят из клиента OSRM по отдельности, и при
+// дроблении батчей второй может оказаться короче. Паника тут положила бы
+// задачу целиком, поэтому длина проверяется, а не подразумевается.
 func TestSigmaOf_ShorterOkSliceIsSafe(t *testing.T) {
 	assert.NotPanics(t, func() { SigmaOf([]float64{5, 6, 7}, []bool{true}) })
 }
 
 // ------------------------------------------------------------------- Weight
 
+// Точка касания шкалы: снэп ноль даёт ровно единицу. От неё отсчитываются
+// все остальные веса, и сдвиг здесь сдвинул бы пороги всех правил разом.
 func TestWeight_OnRoadIsFullTrust(t *testing.T) {
 	assert.InDelta(t, 1.0, Weight(0, true, SnapSigmaM), 1e-9,
 		"точка ровно на дороге — полное доверие")
@@ -150,7 +156,11 @@ func TestWeight_NonPositiveSigmaDoesNotExplode(t *testing.T) {
 
 // ------------------------------------------------------------------- Smooth
 
-// track builds n points with the given time step, all at the same place.
+// evenTrack — n точек в ОДНОМ месте с ровным шагом по времени.
+//
+// Место одно намеренно: здесь проверяются веса и сглаживание, а они смотрят
+// только на снэпы и на время. Разные координаты добавили бы в тест геометрию,
+// от которой результат не зависит, — и спрятали бы причину падения.
 func evenTrack(n, stepSec int) []geo.Point {
 	out := make([]geo.Point, n)
 	for i := range out {
@@ -226,12 +236,17 @@ func TestSmooth_LimitsNeighbourCount(t *testing.T) {
 		"участок шире окна не должен быть размазан соседями")
 }
 
+// Нулевое окно — не «сглаживание выключено», а «мерить время нечем».
+// Отдать веса как есть значило бы тихо снять защиту от одинокой точки,
+// случайно легшей на дорогу, поэтому берётся счёт соседей.
 func TestSmooth_ZeroWindowFallsBackToNeighbourCount(t *testing.T) {
 	w := []float64{-1, -1, 1, -1, -1}
 	got := Smooth(w, evenTrack(5, 30), 0)
 	assert.InDelta(t, -1.0, got[2], 1e-9, "с выключенным окном работает счёт соседей")
 }
 
+// То же самое, но точек нет вовсе: считать окно не от чего. Случай не
+// выдуманный — ядро зовут и на голых весах, из тестов соседних правил.
 func TestSmooth_NilPointsFallsBackToNeighbourCount(t *testing.T) {
 	w := []float64{-1, -1, 1, -1, -1}
 	assert.NotPanics(t, func() {
@@ -240,6 +255,9 @@ func TestSmooth_NilPointsFallsBackToNeighbourCount(t *testing.T) {
 	})
 }
 
+// Весов больше, чем точек. Длина результата равна длине ВЕСОВ: вызывающий
+// разложит его обратно по своему списку, и укоротить его молча — значит
+// сдвинуть все веса на треке.
 func TestSmooth_LengthMismatchIsSafe(t *testing.T) {
 	assert.NotPanics(t, func() {
 		got := Smooth([]float64{1, 2, 3}, evenTrack(1, 60), SmoothWindow)
@@ -247,6 +265,9 @@ func TestSmooth_LengthMismatchIsSafe(t *testing.T) {
 	})
 }
 
+// Самое дешёвое свойство и самое важное: индекс веса — это индекс точки.
+// Сглаживание, потерявшее один элемент, сдвинет весь хвост трека, и
+// заметить это по результату чистки будет уже невозможно.
 func TestSmooth_KeepsLength(t *testing.T) {
 	w := []float64{1, -1, 0.5, -0.5, 0}
 	assert.Len(t, Smooth(w, evenTrack(5, 30), SmoothWindow), len(w))
@@ -268,6 +289,9 @@ func TestPointWeights_SmoothingOnlyLowers(t *testing.T) {
 		"плохая точка среди хороших обязана остаться плохой")
 }
 
+// Зеркало к TestPointWeights_SmoothingOnlyLowers: там проверяется, что
+// плохую точку среди хороших не вытянули наверх, здесь — что хорошую среди
+// плохих опустили. Без обеих сторон тест не про сглаживание, а про знак.
 func TestPointWeights_LoneGoodAmongBadIsLowered(t *testing.T) {
 	snaps := []float64{300, 300, 300, 2, 300, 300, 300}
 	ok := make([]bool, 7)
@@ -308,6 +332,9 @@ func TestPointWeights_AllUnansweredAreZero(t *testing.T) {
 	}
 }
 
+// Снэпов пришло меньше, чем точек (батч отказал и не дробился дальше).
+// Длина результата обязана равняться числу ТОЧЕК: по ней ядро раскладывает
+// веса обратно на трек.
 func TestPointWeights_EmptyAndMismatched(t *testing.T) {
 	assert.Empty(t, PointWeights(nil, nil, nil))
 	assert.NotPanics(t, func() {
@@ -339,6 +366,9 @@ func TestPointWeights_MatchesManualComposition(t *testing.T) {
 	}
 }
 
+// Замер на потолке входа: MAX_POINTS = 50 000 точек раз в пять секунд.
+// Здесь ловится не медленный код, а случайная квадратичность — на таком
+// размере она превращает доли секунды в минуты.
 func BenchmarkPointWeights(b *testing.B) {
 	const n = 50000
 	pts := evenTrack(n, 5)
@@ -353,8 +383,6 @@ func BenchmarkPointWeights(b *testing.B) {
 		PointWeights(pts, snaps, ok)
 	}
 }
-
-var _ = time.Second
 
 func TestMedianInPlace_SortsInput(t *testing.T) {
 	// Эта версия переставляет вход намеренно — вызывающий обязан передавать
