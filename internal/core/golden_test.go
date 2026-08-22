@@ -266,6 +266,11 @@ func (g goldenWeights) snapSlices() ([]float64, []bool) {
 // бите между реализациями экспоненты.
 const weightEps = 1e-9
 
+// Оценка точности прибора — первое число в цепочке: через неё считаются ВСЕ
+// веса, и разойдись она хоть в третьем знаке, дальше разъедется всё.
+//
+// Допуск 1e-12, то есть фактически «побитово». Он и достижим: замеренное
+// расхождение — 2.2e-16, последний бит числа.
 func TestGolden_SigmaMatchesPrototype(t *testing.T) {
 	for _, g := range loadGoldenWeights(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -276,6 +281,13 @@ func TestGolden_SigmaMatchesPrototype(t *testing.T) {
 	}
 }
 
+// Веса всех точек трека против прототипа. Ищется и запоминается ХУДШЕЕ
+// расхождение с номером точки: среднее по треку скрыло бы единственную
+// разъехавшуюся точку, а именно она и решает, войдёт ли кусок в цепочку.
+//
+// Здесь же ловилась ошибка не кода, а выгрузки: снэпы округлили до шести
+// знаков, Python считал веса на полных — получилось 2.4e-8. Правило с тех пор
+// такое: эталон выгружать ровно на тех числах, которые читает Go.
 func TestGolden_RawWeightsMatchPrototype(t *testing.T) {
 	for _, g := range loadGoldenWeights(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -402,6 +414,10 @@ func diffSets(got map[int]struct{}, want []int) (extra, missing []int) {
 	return extra, missing
 }
 
+// Ловушки: сравниваются МНОЖЕСТВА уличённых точек, и обе разности проверяются
+// по отдельности. Лишние и недостающие — разные болезни: первое режет асфальт,
+// второе пропускает спуфинг, и по одному числу «совпало на 98 %» их не
+// различить.
 func TestGolden_TrapsMatchPrototype(t *testing.T) {
 	for _, g := range loadGoldenRules(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -413,6 +429,9 @@ func TestGolden_TrapsMatchPrototype(t *testing.T) {
 	}
 }
 
+// Огрызки, тем же способом. Правило смотрит на трек по трём меркам сразу,
+// и разъехаться тут может любая из них — поэтому сверяется итог на настоящих
+// треках, а не пороги по отдельности.
 func TestGolden_IslandsMatchPrototype(t *testing.T) {
 	for _, g := range loadGoldenRules(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -567,6 +586,12 @@ func (g goldenReorder) points() []geo.Point {
 	return pts
 }
 
+// Перестановка пачек: сверяется ВЕСЬ порядок индексов, и при расхождении
+// сообщается номер первой разошедшейся позиции.
+//
+// Порядок внутри пачки выбирается по минимальному пути, и минимумов бывает
+// несколько. Прототип и Go обязаны выбирать один и тот же — иначе километраж
+// гуляет от реализации к реализации на ровном месте.
 func TestGolden_ReorderMatchesPrototype(t *testing.T) {
 	for _, g := range loadGoldenReorder(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -769,6 +794,13 @@ func (r *tapeRoads) PairDistance(_ context.Context, pairs []Pair) ([]float64, []
 	return dist, ok, nil
 }
 
+// Проверка переходов по дорогам — на ПЛЁНКЕ: записанных ответах настоящего
+// OSRM. Живой сервис в тесте не годится, граф меняется от версии к версии.
+//
+// Сверяется не только результат, но и сами ВОПРОСЫ: спросить пару, которой
+// прототип не спрашивал, — уже расхождение, значит цепочка разрезана иначе.
+// На этом ловилось, что Go округлял азимут, а прототип усекал: один градус
+// разницы давал другой ключ плёнки, и ответа для него просто не находилось.
 func TestGolden_RoadCheckMatchesPrototype(t *testing.T) {
 	for _, g := range loadGoldenRoad(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -862,6 +894,12 @@ func comparePenalty(t *testing.T, name string, want map[string]float64, got map[
 	}
 }
 
+// Четыре правила цепочки разом, и у каждого сверяется ДВОЙКА: число
+// срабатываний и поимённая карта штрафов.
+//
+// Одного числа мало — правило может сработать столько же раз, но повесить
+// штраф на другие точки. Одной карты тоже мало: два срабатывания по половине
+// штрафа дают ту же сумму, что одно целое.
 func TestGolden_ChainRulesMatchPrototype(t *testing.T) {
 	for _, g := range loadGoldenChainRules(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -935,6 +973,8 @@ func (g goldenLoops) points() []geo.Point {
 	return pts
 }
 
+// Петли — тоже на плёнке. Правило нарезает трек окнами и спрашивает дорогу
+// между концами каждого, поэтому набор вопросов здесь прямо выдаёт нарезку.
 func TestGolden_LoopsMatchPrototype(t *testing.T) {
 	for _, g := range loadGoldenLoops(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -1013,6 +1053,12 @@ func (g goldenAmnesty) snaps() ([]float64, []bool) {
 	return snaps, ok
 }
 
+// Амнистия: единственное место, где штраф СНИМАЕТСЯ. Ошибка тут опаснее
+// прочих — лишнее оправдание возвращает спуфинг в цепочку, и никакое правило
+// после этого его уже не тронет.
+//
+// Подозреваемые и уличённые подаются на вход из эталона, а не считаются
+// заново: сверяется именно решение об оправдании, а не то, что было до него.
 func TestGolden_AmnestyMatchesPrototype(t *testing.T) {
 	for _, g := range loadGoldenAmnesty(t) {
 		t.Run(g.UID, func(t *testing.T) {
@@ -1128,6 +1174,15 @@ func (s *tapeSnaps) Snap(_ context.Context, pts []geo.Point) ([]float64, []bool,
 	return snaps, ok, nil
 }
 
+// Ядро ЦЕЛИКОМ на настоящих треках — главный тест всего пакета.
+//
+// Тесты выше сверяют шаги поодиночке, и каждый может совпасть, пока порядок
+// шагов или передача штрафов между ними разъехались. Здесь прогоняется весь
+// путь: снэпы с плёнки, все правила, выбор цепочки, проходы по дорогам.
+//
+// Плёнок две, и это не излишество. `tapeSnaps` вдобавок проверяет, о КАКИХ
+// точках Go спросил снэпы: спросив не о тех, он получил бы чужие расстояния и
+// пришёл к «правильному» ответу по неправильным данным.
 func TestGolden_CoreMatchesPrototype(t *testing.T) {
 	for _, g := range loadGoldenCore(t) {
 		t.Run(g.UID, func(t *testing.T) {
