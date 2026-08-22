@@ -283,6 +283,9 @@ func TestCheckByRoad_PenaltyAccumulatesAcrossPasses(t *testing.T) {
 	assert.GreaterOrEqual(t, st2.Penalty[1], after1, "штраф не должен обнуляться")
 }
 
+// Цепочка без единого перехода: пустая, nil или из одной точки. Спрашивать
+// маршрутизатор не о чем, и проверка обязана это понять ДО того, как соберёт
+// пустой батч и сходит с ним по сети.
 func TestCheckByRoad_EmptyAndTinyChains(t *testing.T) {
 	pts := drive(5, 600, 10.0, 0.0, 0.05, 0)
 	for _, chain := range [][]int{nil, {}, {0}} {
@@ -292,6 +295,11 @@ func TestCheckByRoad_EmptyAndTinyChains(t *testing.T) {
 	}
 }
 
+// Бюджет задачи кончился. Проверяется не «вернули ноль», а что в сеть НЕ
+// ходили вовсе — счётчик обращений к маршрутизатору обязан остаться нулевым.
+//
+// Разница существенная: OSRM — общий узкий проход, и задача, у которой время
+// уже вышло, не должна занимать его в пользу тех, у кого не вышло.
 func TestCheckByRoad_CancelledContext(t *testing.T) {
 	pts := drive(20, 600, 10.0, 0.0, 0.05, 0)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -303,6 +311,9 @@ func TestCheckByRoad_CancelledContext(t *testing.T) {
 	assert.Zero(t, roads.count(), "с истёкшим бюджетом в сеть не ходим")
 }
 
+// Маршрутизатор не задан вовсе. Это штатный режим, а не поломка: без OSRM
+// сервис работает, чистка идёт по прямой физике, а прогон помечается неполным
+// выше по течению. Паника тут положила бы весь этот запасной путь.
 func TestCheckByRoad_NilClientIsSafe(t *testing.T) {
 	pts := drive(10, 600, 10.0, 0.0, 0.05, 0)
 	assert.NotPanics(t, func() {
@@ -311,6 +322,12 @@ func TestCheckByRoad_NilClientIsSafe(t *testing.T) {
 	})
 }
 
+// Свежий блокнот пуст по всем трём картам, включая скрытую `asked`.
+//
+// Проверка выглядит бессодержательной, но сторожит настоящую беду: блокнот
+// один на прогон и переживает до дюжины проходов ядра. Заведись в нём хоть
+// один запрет с прошлого трека — на этом отрежется честный кусок, и понять
+// по результату, откуда он взялся, будет нельзя.
 func TestRoadState_FreshHasNoBansOrPenalty(t *testing.T) {
 	st := NewRoadState()
 	assert.Empty(t, st.Banned)
