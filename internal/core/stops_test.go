@@ -80,6 +80,9 @@ func TestFindStops_MovingTrackHasNone(t *testing.T) {
 	assert.Empty(t, FindStops(pts, StopRadiusM, StopMinStay))
 }
 
+// Базовый случай, на котором проверяются ГРАНИЦЫ интервала, а не сам факт
+// стоянки. Границы важнее: по ним дорисовка решает, где дыра, а где переход
+// внутри стоянки, и сдвиг на одну точку уводит нарисованную дорогу во двор.
 func TestFindStops_FindsSingleStop(t *testing.T) {
 	var pts []geo.Point
 	pts = append(pts, drive(3, 60, 10.0, 0.0, 0.005, 0)...)       // подъезд
@@ -116,6 +119,9 @@ func TestFindStops_ExactlyAtThresholdCounts(t *testing.T) {
 	assert.Equal(t, 2, got[0].End)
 }
 
+// Стоянка у самого края трека. Поиск ведётся окном по соседям, и у края
+// соседа с одной стороны нет — обычное место, где интервал теряют целиком.
+// Случай настоящий: рейс начинается с погрузки, машина уже стоит.
 func TestFindStops_StopAtTrackStart(t *testing.T) {
 	var pts []geo.Point
 	pts = append(pts, still(8, 120, 10.0, 0.0, 0.0002, 0)...)
@@ -126,6 +132,9 @@ func TestFindStops_StopAtTrackStart(t *testing.T) {
 	assert.Equal(t, 0, got[0].Start, "стоянка в самом начале трека тоже стоянка")
 }
 
+// То же с другого края, и это НЕ дубль предыдущего: начало серии и её конец
+// ищутся разным кодом. Рейс кончается разгрузкой — точка выхода из стоянки
+// так и не наступает, и серию надо закрыть последней точкой трека.
 func TestFindStops_StopAtTrackEnd(t *testing.T) {
 	var pts []geo.Point
 	pts = append(pts, drive(4, 60, 10.0, 0.0, 0.005, 0)...)
@@ -136,6 +145,9 @@ func TestFindStops_StopAtTrackEnd(t *testing.T) {
 	assert.Equal(t, len(pts)-1, got[0].End, "стоянка в конце доходит до последней точки")
 }
 
+// Две стоянки подряд обязаны остаться ДВУМЯ. Слипнись они в одну, дорисовка
+// сочла бы переезд между ними движением внутри стоянки и не стала бы рисовать
+// дорогу — на карте остался бы прыжок через поля.
 func TestFindStops_TwoSeparateStops(t *testing.T) {
 	var pts []geo.Point
 	pts = append(pts, still(6, 120, 10.0, 0.0, 0.0002, 0)...)     // стоянка 1
@@ -241,6 +253,9 @@ func TestTrustedStop_TooShortIsNotTrusted(t *testing.T) {
 	assert.False(t, TrustedStop(pts, s, 15, true), "десять минут — мало")
 }
 
+// Ровно на пороге длительности: сравнение нестрогое, четверть часа
+// засчитывается. Порог выверен по разметке пользователя, и сдвиг его на
+// секунду в другую сторону выкинул бы из доверенных короткие погрузки.
 func TestTrustedStop_ExactlyAtDurationThreshold(t *testing.T) {
 	pts, s := trustCase(900, 16, 0.0001, drive(3, 60, 10.01, 0.0, 0.005, 1000))
 	assert.True(t, TrustedStop(pts, s, 15, true), "ровно четверть часа засчитывается")
@@ -330,6 +345,9 @@ func TestTrustedStop_ExitBeyondWindowIsIgnored(t *testing.T) {
 
 // --------------------------------------------------------------- IsFrozen
 
+// Залипание в чистом виде: двадцать точек с координатой байт в байт.
+// Так выглядит трекер, потерявший сигнал и повторяющий последнее известное
+// место, — а занимает это 53 % всего времени записи в базе.
 func TestIsFrozen_RepeatedCoordinate(t *testing.T) {
 	pts := make([]geo.Point, 20)
 	for i := range pts {
@@ -338,6 +356,9 @@ func TestIsFrozen_RepeatedCoordinate(t *testing.T) {
 	assert.True(t, IsFrozen(pts, StopRange{0, 19}), "координата байт в байт — залипание")
 }
 
+// Зеркало: настоящая стоянка. Живой приёмник шумит всегда — на разметке
+// пользователя из 96 подтверждённых стоянок не нашлось ни одной с разбросом
+// меньше 20 метров. Признав такую залипанием, мы стёрли бы честную стоянку.
 func TestIsFrozen_RealJitterIsNotFrozen(t *testing.T) {
 	pts := still(20, 60, 10.0, 0.0, 0.0001, 0) // размах ~31 м
 	assert.False(t, IsFrozen(pts, StopRange{0, 19}), "живой приёмник всегда шумит")
@@ -352,6 +373,9 @@ func TestIsFrozen_AtThreshold(t *testing.T) {
 	assert.False(t, IsFrozen(bigger, StopRange{0, 9}))
 }
 
+// Одна точка. Размаха у неё нет, и ответ здесь — соглашение, а не измерение:
+// считаем залипанием. Признать её живой значило бы доверять точке, про
+// которую ничего не известно.
 func TestIsFrozen_SinglePoint(t *testing.T) {
 	pts := []geo.Point{at(0, 10.0, 0.0)}
 	assert.True(t, IsFrozen(pts, StopRange{0, 0}), "одна точка размаха не имеет")
@@ -359,6 +383,9 @@ func TestIsFrozen_SinglePoint(t *testing.T) {
 
 // ------------------------------------------------------------ StopRange
 
+// Интервал ВКЛЮЧИТЕЛЬНЫЙ с обоих концов. Ошибка на единицу здесь тихая:
+// стоянка укоротится на точку, дорисовка сочтёт её выездом и нарисует дорогу
+// туда, где машина не двигалась.
 func TestStopRange_Len(t *testing.T) {
 	assert.Equal(t, 1, StopRange{5, 5}.Len(), "интервал включительный")
 	assert.Equal(t, 6, StopRange{5, 10}.Len())
@@ -383,6 +410,9 @@ func TestStopOwner_MapsEveryPointOfEveryStop(t *testing.T) {
 	}
 }
 
+// Стоянок нет вовсе, либо трек пуст, а стоянка заявлена. Второе — не выдумка:
+// список стоянок и длина трека приезжают в дорисовку по отдельности, и после
+// упаковки трек короче, чем был при поиске стоянок.
 func TestStopOwner_Empty(t *testing.T) {
 	assert.Empty(t, StopOwner(10, nil))
 	assert.Empty(t, StopOwner(0, []StopRange{{0, 0}}))

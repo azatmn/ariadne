@@ -23,6 +23,10 @@ func TestBanKey_SamePlaceSameKey(t *testing.T) {
 		"сдвиг в метр и другое время — тот же запрет")
 }
 
+// Ключ запрета огрубляет координаты до клетки, иначе дрожание приёмника
+// делало бы каждый переход новым и запреты никогда не совпадали бы. Здесь
+// проверяется обратное: точки ИЗ РАЗНЫХ клеток обязаны дать разные ключи —
+// слипнись они, запрет одного перехода закрыл бы заодно соседний, честный.
 func TestBanKey_DifferentPlacesDifferentKeys(t *testing.T) {
 	a := at(0, 10.0, 0.0)
 	b := at(60, 10.5, 0.0)
@@ -31,6 +35,9 @@ func TestBanKey_DifferentPlacesDifferentKeys(t *testing.T) {
 	assert.NotEqual(t, BanKey(a, b), BanKey(a, far))
 }
 
+// Ключ учитывает направление. Запрет ставится на конкретный переход А→Б,
+// а обратный Б→А бывает вполне проезжаем: на разделённой трассе выезд и
+// въезд идут по разным сторонам.
 func TestBanKey_IsDirectional(t *testing.T) {
 	a, b := at(0, 10.0, 0.0), at(60, 10.5, 0.0)
 	assert.NotEqual(t, BanKey(a, b), BanKey(b, a),
@@ -76,18 +83,25 @@ func TestBanKey_WorksAtHighLatitude(t *testing.T) {
 
 // -------------------------------------------------------------- Reachable
 
+// Опорная точка шкалы: 100 км за час — самый обычный ход фуры по трассе.
+// Всё, что ниже этого, проверка обязана пропускать без разговоров.
 func TestReachable_NormalDriving(t *testing.T) {
 	a := at(0, 10.0, 0.0)
 	b := at(3600, 10.9, 0.0) // ~100 км за час
 	assert.True(t, Reachable(a, b, nil))
 }
 
+// Другой конец шкалы: 222 км за минуту. Это уже не «быстро едет», а телепорт,
+// и именно такие переходы дают половину километража в сырой базе.
 func TestReachable_TooFast(t *testing.T) {
 	a := at(0, 10.0, 0.0)
 	b := at(60, 12.0, 0.0) // 222 км за минуту
 	assert.False(t, Reachable(a, b, nil))
 }
 
+// Время идёт назад. Без явной проверки отрицательная длительность даёт
+// отрицательную скорость, а она проходит любой потолок сверху — то есть
+// перевёрнутая пара выглядела бы самой законной в треке.
 func TestReachable_BackwardsInTime(t *testing.T) {
 	a := at(600, 10.0, 0.0)
 	b := at(0, 10.001, 0.0)
@@ -124,6 +138,9 @@ func TestReachable_BannedTransitionNeedsMoreTime(t *testing.T) {
 	assert.True(t, Reachable(a, slow, banned), "за два часа — успеть")
 }
 
+// Запрет действует ТОЛЬКО на свой переход. Ядро запрещает переходы пачками
+// и строит цепочку заново до дюжины раз; расплывись запрет на соседей — с
+// каждым проходом отрезалось бы всё больше честного трека.
 func TestReachable_BanOnOtherPlaceDoesNotApply(t *testing.T) {
 	a := at(0, 10.0, 0.0)
 	b := at(600, 10.1, 0.0)
@@ -133,6 +150,9 @@ func TestReachable_BanOnOtherPlaceDoesNotApply(t *testing.T) {
 	assert.True(t, Reachable(a, b, banned), "запрет чужого перехода не действует")
 }
 
+// Первый проход ядра идёт вообще без запретов, и карта приходит пустой или
+// nil. Читать nil-карту в Go можно, но проверка не должна на этом строиться
+// молча — случай зафиксирован тестом.
 func TestReachable_NilAndEmptyBans(t *testing.T) {
 	a, b := at(0, 10.0, 0.0), at(3600, 10.5, 0.0)
 	assert.True(t, Reachable(a, b, nil))
@@ -153,6 +173,8 @@ func chainWeights(n int, good ...int) []float64 {
 	return w
 }
 
+// Вырожденные входы. Одна точка — это цепочка из одной точки, а не пустая:
+// переходов в ней нет, проверять нечего, и выбрасывать её не за что.
 func TestBuildChain_EmptyAndSingle(t *testing.T) {
 	assert.Empty(t, BuildChain(nil, nil, nil))
 	assert.Equal(t, []int{0}, BuildChain(drive(1, 30, 10, 0, 0.001, 0), []float64{1}, nil))
@@ -214,6 +236,10 @@ func TestBuildChain_RespectsReachability(t *testing.T) {
 	assert.NotContains(t, got, 2, "прыжок на 3300 км в цепочку не берём")
 }
 
+// Главная связка всего ядра: запреты, которые ставит проверка по дорогам,
+// обязаны менять выбор цепочки. Сравнивается пара прогонов на одном треке —
+// без запретов и с ними; равенство результатов означало бы, что проверка по
+// дорогам работает вхолостую, а на глаз этого не видно.
 func TestBuildChain_ObeysBans(t *testing.T) {
 	pts := drive(10, 600, 10.0, 0.0, 0.05, 0) // шаг 5.6 км за 10 минут
 	w := make([]float64, len(pts))
@@ -293,6 +319,8 @@ func TestBuildChain_AllNegativeKeepsSinglePoint(t *testing.T) {
 	assert.LessOrEqual(t, len(got), 2)
 }
 
+// Весов меньше и больше, чем точек. Оба перекоса настоящие: список весов
+// собирается из ответов OSRM батчами, и отказавший батч укорачивает его.
 func TestBuildChain_LengthMismatchIsSafe(t *testing.T) {
 	pts := drive(5, 60, 10.0, 0.0, 0.002, 0)
 	assert.NotPanics(t, func() { BuildChain(pts, []float64{1, 1}, nil) })
@@ -313,6 +341,10 @@ func TestBuildChain_TieBreakingIsStable(t *testing.T) {
 	}
 }
 
+// Двадцать тысяч точек с чередующимися весами — вход, на котором динамическое
+// программирование не может рано отсечь ветку и перебирает по-настоящему.
+// Цепочка строится заново на КАЖДОМ проходе ядра, а проходов до дюжины:
+// стоимость здесь умножается на двенадцать.
 func BenchmarkBuildChain(b *testing.B) {
 	const n = 20000
 	pts := drive(n, 30, 10.0, 0.0, 0.0005, 0)
