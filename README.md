@@ -374,11 +374,15 @@ go run ./cmd/debugserver           # :8080, ручка /v1/routes/resolve-collis
 ## CI/CD (GitLab)
 
 ```
-git push → .gitlab-ci.yml → image (собрать образ для тестов, если его нет в реестре)
+git push → .gitlab-ci.yml → image (только если менялся Dockerfile.ci или GO_VERSION)
                           → test  (go vet + go test -race + govulncheck)
-                          → build (docker → Registry, только main)
+                          → build (docker → Registry; по тегу сам, на main — кнопкой)
                           → deploy (webhook, TODO)
 ```
+
+На обычный пуш бежит одна стадия `test`. Остальные две поднимают `docker:dind`,
+а это дороже всех тестов вместе взятых — и раньше они бежали на каждый коммит,
+включая правки README. Бесплатных четырёхсот минут в месяц на такое не хватало.
 
 - **Версия Go задаётся в одном месте** — `GO_VERSION` в `.gitlab-ci.yml`; она же уезжает в тег образа для тестов и в `--build-arg` обоих Dockerfile. В `go.mod` версия точная, до заплатки: строку `go` компилятор проверяет всегда, а `toolchain` в официальных образах игнорируется (`GOTOOLCHAIN=local`).
 - **`govulncheck` валит сборку** по находкам. Заплатки Go выходят раз в месяц-полтора и закрывают дыры в `crypto/tls` и `net/http`, до которых наш код дотягивается, поэтому красный CI после релиза — штатное дело: поднять `GO_VERSION` и `go.mod`.
