@@ -82,11 +82,18 @@ func countCoords(path string) int {
 
 // ---------------------------------------------------------------- конструктор
 
+// Без адреса клиент не собирается вовсе. Это не придирка: пустой OSRM_URL —
+// осознанная настройка «работать без маршрутизатора», и обрабатывается она
+// выше, отказом собирать клиент. Молча собравшийся клиент с пустым адресом
+// начал бы стучаться в никуда на каждой задаче.
 func TestNew_RequiresBaseURL(t *testing.T) {
 	_, err := New(Config{})
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
+// Умолчания подобраны под боевой OSRM, а не взяты с потолка: батч 400 точек
+// он держит, матрицы пробуем. Занизь их — вырастет число запросов, а лимит
+// запросов в секунду на общем сервере и есть узкое место.
 func TestNew_FillsSaneDefaults(t *testing.T) {
 	c, err := New(Config{BaseURL: "http://example"})
 	require.NoError(t, err)
@@ -94,6 +101,8 @@ func TestNew_FillsSaneDefaults(t *testing.T) {
 	assert.True(t, c.UsesTable(), "в режиме по умолчанию матрицы пробуем")
 }
 
+// Выключатель матриц. Нужен потому, что на боевом OSRM ручка /table закрыта:
+// клиент обязан уметь работать одними попарными запросами.
 func TestNew_TableOffDisablesMatrix(t *testing.T) {
 	c, err := New(Config{BaseURL: "http://example", UseTable: TableOff})
 	require.NoError(t, err)
@@ -102,6 +111,11 @@ func TestNew_TableOffDisablesMatrix(t *testing.T) {
 
 // ------------------------------------------------------------------- снэпы
 
+// Основной контракт снэпов: на каждую посланную точку приходит своё
+// расстояние до дороги и отметка «отвечено».
+//
+// Длина ответа обязана равняться числу точек — по индексам ядро раскладывает
+// снэпы обратно на трек, и сдвиг на единицу приписал бы расстояния соседям.
 func TestSnap_ReturnsDistancePerPoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(waypointsJSON(countCoords(r.URL.Path), 7)))
@@ -119,6 +133,12 @@ func TestSnap_ReturnsDistancePerPoint(t *testing.T) {
 	assert.Empty(t, warns)
 }
 
+// Батчи идут с перехлёстом в одну точку: [0,4), [3,7).
+//
+// Стык проверяется дважды намеренно. Без перехлёста последняя точка батча и
+// первая точка следующего попадают в разные запросы, и OSRM сажает их на
+// дорогу независимо — на развязке это дают разные стороны, а переход между
+// ними потом выглядит невозможным.
 func TestSnap_BatchesOverlapByOnePoint(t *testing.T) {
 	var sizes []int
 	var mu atomic.Int64
@@ -220,6 +240,9 @@ func TestShrinkBatch_StopsAtFloor(t *testing.T) {
 	assert.GreaterOrEqual(t, c.BatchPoints(), 32, "падать до единиц клиент не должен")
 }
 
+// Ноль, пустой срез и одна точка. Маршрут из одной точки OSRM не строит, и
+// спрашивать его не о чем — клиент обязан вернуть срезы нужной длины и
+// промолчать, а не сходить в сеть за отказом.
 func TestSnap_TooFewPoints(t *testing.T) {
 	c := newClient(t, httptest.NewServer(http.NotFoundHandler()), nil)
 	for _, pts := range [][]geo.Point{nil, {}, track(1)} {
@@ -292,6 +315,12 @@ func TestPairDistance_FallsBackWhenTableClosed(t *testing.T) {
 	assert.Equal(t, before, tableCalls.Load(), "в закрытую ручку больше не стучимся")
 }
 
+// Матрица расстояний вместо пачки попарных запросов.
+//
+// Сверяется, что из матрицы достаётся ПРАВИЛЬНАЯ клетка. Начала и концы пар
+// идут в запрос одним списком, поэтому расстояние пары i лежит не на главной
+// диагонали, а со сдвигом на число пар. В ответе намеренно расставлены 999 —
+// ошибись индекс, тест возьмёт их, а не 100 и 200.
 func TestPairDistance_UsesTableMatrix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Contains(t, r.URL.Path, "/table/")
@@ -315,6 +344,11 @@ func TestPairDistance_UsesTableMatrix(t *testing.T) {
 	assert.Equal(t, 200.0, dist[1])
 }
 
+// «Проезда нет» — это НЕ нулевое расстояние.
+//
+// Разница решает всё: ноль означал бы, что точки рядом и переход законен, то
+// есть спуфинговый прыжок прошёл бы проверку как самый безобидный. Поэтому
+// отсутствие ответа помечается флагом, а не значением.
 func TestPairDistance_NoRouteIsNotZero(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/table/") {
@@ -335,6 +369,8 @@ func TestPairDistance_NoRouteIsNotZero(t *testing.T) {
 	assert.NotEmpty(t, warns)
 }
 
+// Пустой список пар. Случай рядовой: ядро зовёт проверку по дорогам на
+// каждом проходе, и на последних проходах спрашивать уже нечего.
 func TestPairDistance_Empty(t *testing.T) {
 	c := newClient(t, httptest.NewServer(http.NotFoundHandler()), nil)
 	dist, ok, warns := c.PairDistance(context.Background(), nil)
@@ -345,6 +381,12 @@ func TestPairDistance_Empty(t *testing.T) {
 
 // ------------------------------------------------------------- геометрия
 
+// Геометрия маршрута для дорисовки дыр — и снэпнутые концы тем же ответом.
+//
+// Концы важны отдельно: ручка /nearest на боевом закрыта, и посадить концы
+// дыры на дорогу больше нечем. Заодно проверяется, что в запрос уходят
+// geometries=geojson и overview=full — без них придёт закодированная строка
+// или огрызок вместо подробной линии.
 func TestRouteGeometry_ParsesPathAndSnappedEnds(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.RawQuery, "geometries=geojson")
@@ -369,6 +411,8 @@ func TestRouteGeometry_ParsesPathAndSnappedEnds(t *testing.T) {
 	assert.Equal(t, 55.719, r.SnapB[1])
 }
 
+// Между концами дыры проезда нет. Дорисовка обязана это понять и оставить
+// прямую, а не получить пустой маршрут и нарисовать линию нулевой длины.
 func TestRouteGeometry_NoRoute(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -385,6 +429,9 @@ func TestRouteGeometry_NoRoute(t *testing.T) {
 
 // --------------------------------------------------------- повторы и отмена
 
+// Временный отказ (502) повторяется. Сервер за балансировщиком отдаёт такое
+// при перезапуске соседа, и уронить из-за этого всю задачу было бы обидно:
+// ответ на повторе тот же самый, просто чуть позже.
 func TestGet_RetriesOnServerError(t *testing.T) {
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -403,6 +450,14 @@ func TestGet_RetriesOnServerError(t *testing.T) {
 	assert.True(t, ok[0])
 }
 
+// Зеркало к повторам: три кода, которые повторять бессмысленно.
+//
+//   - 400 — OSRM отвечает так на «маршрута нет» и на негодные координаты;
+//   - 404 — ручка закрыта (так боевой отвечает на /table и /nearest);
+//   - 414 — слишком длинный адрес, лечится уменьшением батча, а не повтором.
+//
+// Без этой половины «повторять всегда» проходило бы тесты — и на закрытой
+// ручке клиент честно стучался бы в неё трижды за каждый запрос.
 func TestGet_DoesNotRetryPermanentErrors(t *testing.T) {
 	for _, code := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusRequestURITooLong} {
 		var calls atomic.Int64
@@ -421,6 +476,11 @@ func TestGet_DoesNotRetryPermanentErrors(t *testing.T) {
 	}
 }
 
+// Бюджет задачи истёк, пока запрос был в полёте.
+//
+// Проверяется ВРЕМЯ возврата, а не только признак отказа: сервер отвечает две
+// секунды, бюджет 50 мс. Клиент, передающий ctx только в свою обёртку, но не
+// в сам HTTP-запрос, вернул бы тот же отказ — но досидев до конца.
 func TestGet_RespectsCancelledContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(2 * time.Second)
@@ -463,6 +523,8 @@ func TestGet_SendsFiveDecimalCoordinates(t *testing.T) {
 
 // ------------------------------------------- проверка связи и негодные ответы
 
+// Проверка связи на старте: сервис здоровается с OSRM настоящим маршрутом,
+// а не запросом к корню. Отвечающий корень ещё не значит, что граф загружен.
 func TestPing_OkWhenServerRoutes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":1200,"duration":90,` +
@@ -487,12 +549,17 @@ func TestPing_FailsWhenServerSilent(t *testing.T) {
 	assert.Contains(t, err.Error(), srv.URL, "в ошибке должен быть адрес, куда не достучались")
 }
 
+// Хост не отвечает вовсе (порт 1 никем не занят) — отличается от предыдущего
+// случая тем, что HTTP-ответа нет в принципе, а не приходит плохой код.
 func TestPing_FailsOnUnreachableHost(t *testing.T) {
 	c, err := New(Config{BaseURL: "http://127.0.0.1:1", RequestTimeout: time.Second})
 	require.NoError(t, err)
 	assert.Error(t, c.Ping(context.Background()))
 }
 
+// Ответ оборвался на полуслове — так выглядит разрыв соединения посреди
+// передачи. Разобрать половину и выдать её за снэпы нельзя: клиент получит
+// расстояния для части точек и нули для остальных, а нуль означает «на дороге».
 func TestSnap_RejectsMalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"Ok","waypoints":[{"distance":`))
@@ -505,6 +572,9 @@ func TestSnap_RejectsMalformedJSON(t *testing.T) {
 	assert.NotEmpty(t, warns)
 }
 
+// HTTP-ответ успешный, но внутри тела OSRM пишет свой код отказа
+// (NoSegment — точка не легла ни на один сегмент графа). Смотреть надо на
+// оба: код 200 сам по себе ничего не обещает.
 func TestSnap_RejectsNonOkCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"NoSegment","waypoints":[]}`))
@@ -536,6 +606,11 @@ func TestSnap_RejectsWrongWaypointCount(t *testing.T) {
 	assert.NotEmpty(t, warns)
 }
 
+// Матрица пришла оборванной, но ручка НЕ закрыта (не 404).
+//
+// Разница существенная: на 404 клиент откатывается к попарным запросам, а тут
+// откатываться некуда — ручка жива, просто ответила мусором. Пара остаётся
+// без ответа, и это честнее, чем взять из обрывка что попало.
 func TestPairDistance_RejectsMalformedTable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/table/") {
@@ -628,6 +703,9 @@ func TestPairDistance_RejectsRaggedMatrixRows(t *testing.T) {
 	assert.NotEmpty(t, warns)
 }
 
+// Обрыв ответа при запросе геометрии. Наружу уходит nil, а не пустой
+// маршрут: дорисовка проверяет признак, и полупустая структура заставила бы
+// её рисовать линию по нулю координат.
 func TestRouteGeometry_RejectsMalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"Ok","routes":[{"distance":`))
@@ -641,6 +719,8 @@ func TestRouteGeometry_RejectsMalformedJSON(t *testing.T) {
 	assert.Nil(t, r)
 }
 
+// Код Ok, а маршрутов ноль. Формально успех, по сути отказ — и если верить
+// коду, дорисовка возьмёт пустую геометрию за настоящую.
 func TestRouteGeometry_EmptyRoutesList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":"Ok","routes":[]}`))
@@ -673,6 +753,12 @@ func TestPairDistance_CancelledBeforeStart(t *testing.T) {
 	assert.Zero(t, calls.Load(), "с отменённым бюджетом в сеть ходить нельзя")
 }
 
+// Бюджет истёк ещё ДО первого запроса. Проверяется счётчик обращений: он
+// обязан остаться нулевым.
+//
+// Одного признака отказа мало — клиент мог бы сходить в сеть, получить ответ
+// и только потом заметить отмену. OSRM общий и узкий, и задача с истёкшим
+// временем не должна занимать его в пользу тех, у кого время ещё есть.
 func TestSnap_CancelledBeforeStart(t *testing.T) {
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
