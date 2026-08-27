@@ -55,10 +55,16 @@ func TestRecoverNoPanic(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// Тело в пределах лимита доходит до хендлера целиком и не портится.
+// Тело в пределах лимита доходит до хендлера целиком и БЕЗ ошибки.
+//
+// Ошибка проверяется отдельно от содержимого: обёртка, обрывающая чтение на
+// каждом запросе, отдала бы то же самое усечённое тело — только пустое, а
+// пустое тело сравнением с «small body» не поймать.
 func TestLimitBodyAllows(t *testing.T) {
+	var readErr error
 	handler := LimitBody(100)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		var body []byte
+		body, readErr = io.ReadAll(r.Body)
 		_, _ = w.Write(body)
 	}))
 
@@ -68,32 +74,42 @@ func TestLimitBodyAllows(t *testing.T) {
 
 	handler.ServeHTTP(w, r)
 
+	require.NoError(t, readErr, "тело в пределах лимита обязано читаться без ошибки")
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "small body", w.Body.String())
 }
 
-// Тело больше лимита до хендлера целиком не доходит — первая линия против
-// бомбы сжатия: до распаковки дело просто не доходит.
+// Тело больше лимита ОБРЫВАЕТСЯ ОШИБКОЙ, а не обрезается молча.
 //
-// ВНИМАНИЕ, проверка слабая. Она смотрит только на то, что хендлер прочитал
-// меньше двадцати байт, — а это верно и когда чтение оборвалось ошибкой, и
-// когда тело обрезали ровно по лимиту. Разницу между этими случаями тест не
-// видит, и ошибку `http.MaxBytesError` не проверяет вовсе.
+// Разница решающая, и раньше тест её не видел: он смотрел только на то, что
+// до хендлера дошло меньше двадцати байт. Молчаливое усечение дало бы ровно
+// тот же результат — и вот чем это кончилось бы.
+//
+// Усечённое тело выглядит годным. Оно уехало бы в codec, тот споткнулся бы на
+// оборванном zlib и ответил «битый вход». Клиент пошёл бы чинить свои данные,
+// с которыми всё в порядке, вместо того чтобы слать трек по частям. Ошибка
+// же опознаётся по типу и превращается в честное «request body too large».
+//
+// Проверяется и сам лимит из ошибки: обёртка, поставившая свой потолок вместо
+// заданного, прошла бы проверку по одному типу.
 func TestLimitBodyRejects(t *testing.T) {
+	var readErr error
+	var got []byte
 	handler := LimitBody(10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_, _ = w.Write(body)
+		got, readErr = io.ReadAll(r.Body)
 	}))
 
-	// 20 байт — превышает лимит в 10
+	// 20 байт при лимите в 10
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("this body is too big"))
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, r)
 
-	// handler получит обрезанное body (http.MaxBytesReader)
-	// или ошибку при чтении
-	assert.Less(t, w.Body.Len(), 20, "тело сверх лимита не должно доходить до хендлера целиком")
+	var maxErr *http.MaxBytesError
+	require.ErrorAs(t, readErr, &maxErr,
+		"чтение тела сверх лимита обязано давать *http.MaxBytesError, а не молча усекать")
+	assert.Equal(t, int64(10), maxErr.Limit, "в ошибке обязан стоять заданный лимит")
+	assert.LessOrEqual(t, len(got), 10, "прочитать больше лимита нельзя")
 }
 
 // Обёртка отдаёт исходный ResponseWriter через Unwrap.
